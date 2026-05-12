@@ -223,7 +223,7 @@ class ConfirmRequestScreen extends StatelessWidget {
                     ? null
                     : () async {
                         // Call provider to trigger emergency
-                        final success = await context.read<EmergencyProvider>().triggerEmergency();
+                        final success = await context.read<EmergencyProvider>().triggerEmergency(context);
                         if (success && context.mounted) {
                           context.go('/tracking');
                         } else if (context.mounted) {

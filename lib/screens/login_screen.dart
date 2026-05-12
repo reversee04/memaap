@@ -191,7 +191,7 @@ class LoginScreen extends StatelessWidget {
                     SizedBox(
                       width: double.infinity,
                       child: ElevatedButton.icon(
-                        onPressed: () {},
+                        onPressed: () => context.go('/home'),
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.grey[200],
                           foregroundColor: Theme.of(context).colorScheme.primary,

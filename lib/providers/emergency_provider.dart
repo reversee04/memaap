@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/emergency_service.dart';
+import '../models/emergency_request_model.dart';
 
 enum EmergencyState { idle, loading, success, error }
 
@@ -20,11 +21,17 @@ class EmergencyProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<bool> triggerEmergency() async {
+  Future<bool> triggerEmergency(BuildContext context) async {
     _setState(EmergencyState.loading);
 
+    // Parse type
+    EmergencyType type = EmergencyType.other;
+    if (_selectedEmergencyType.toLowerCase().contains('maternal')) {
+      type = EmergencyType.medical;
+    }
+
     // Call the service to handle location, network, API, and SMS fallback
-    final success = await _emergencyService.sendEmergencyRequest(_selectedEmergencyType);
+    final success = await EmergencyService.sendEmergencyAlert(context, type);
 
     if (success) {
       _setState(EmergencyState.success);

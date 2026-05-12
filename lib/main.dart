@@ -1,10 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
+import 'config/app_config.dart';
 import 'providers/emergency_provider.dart';
 import 'router.dart';
 
-void main() {
+void main() async {
+  // Initialize AppConfig before runApp()
+  WidgetsFlutterBinding.ensureInitialized();
+  await AppConfig.initialize();
+  
   runApp(
     MultiProvider(
       providers: [

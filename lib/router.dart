@@ -6,6 +6,8 @@ import 'screens/home_screen.dart';
 import 'screens/confirm_request_screen.dart';
 import 'screens/tracking_screen.dart';
 import 'screens/timeline_screen.dart';
+import 'screens/hospitals_screen.dart';
+import 'screens/profile_screen.dart';
 import 'widgets/bottom_nav_bar.dart';
 
 final _rootNavigatorKey = GlobalKey<NavigatorState>();
@@ -47,9 +49,7 @@ final goRouter = GoRouter(
           routes: [
             GoRoute(
               path: '/hospitals',
-              builder: (context, state) => const Scaffold(
-                body: Center(child: Text('Hospitals Screen')),
-              ),
+              builder: (context, state) => const HospitalsScreen(),
             ),
           ],
         ),
@@ -58,7 +58,7 @@ final goRouter = GoRouter(
           routes: [
             GoRoute(
               path: '/tracking',
-              builder: (context, state) => const TrackingScreen(),
+              builder: (context, state) => TrackingScreen(requestId: state.extra != null ? (state.extra as Map)['requestId'] ?? '' : ''),
               routes: [
                 GoRoute(
                   path: 'timeline',
@@ -73,9 +73,7 @@ final goRouter = GoRouter(
           routes: [
             GoRoute(
               path: '/profile',
-              builder: (context, state) => const Scaffold(
-                body: Center(child: Text('Profile Screen')),
-              ),
+              builder: (context, state) => const ProfileScreen(),
             ),
           ],
         ),
