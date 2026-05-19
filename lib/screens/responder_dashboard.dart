@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -8,10 +9,19 @@ import '../services/location_service.dart';
 import '../services/notification_service.dart';
 import '../widgets/request_tile.dart';
 import '../controllers/map_controller.dart';
+import '../services/auth_service.dart';
 
 /// BLoC for managing responder dashboard state
 class ResponderDashboardCubit extends Cubit<ResponderDashboardState> {
   ResponderDashboardCubit() : super(ResponderDashboardState.initial());
+
+  StreamSubscription? _requestsSubscription;
+
+  @override
+  Future<void> close() {
+    _requestsSubscription?.cancel();
+    return super.close();
+  }
 
   /// Loads initial data and starts WebSocket listening
   Future<void> initialize() async {
@@ -28,12 +38,16 @@ class ResponderDashboardCubit extends Cubit<ResponderDashboardState> {
         return;
       }
 
+      // Load all requests (including local/mock alerts)
+      final requests = await EmergencyRepository.getAllRequests();
+
       // Start listening for incoming emergency requests
       _listenForIncomingRequests(user.id);
       
       emit(state.copyWith(
         isLoading: false,
         user: user,
+        requests: requests,
       ));
     } catch (e) {
       emit(state.copyWith(
@@ -45,23 +59,26 @@ class ResponderDashboardCubit extends Cubit<ResponderDashboardState> {
 
   /// Gets the current authenticated user
   Future<UserModel?> _getCurrentUser() async {
-    // This would get the current user from your auth service
-    // For now, we'll return a mock user
-    return UserModel(
-      id: 'responder_123',
-      name: 'John Responder',
-      phone: '+2651234567',
-      role: 'responder',
-      createdAt: DateTime.now(),
-      updatedAt: DateTime.now(),
-    );
+    try {
+      return await AuthService.getCurrentUser();
+    } catch (e) {
+      debugPrint('Failed to get authenticated responder: $e');
+      return UserModel(
+        id: 'responder_123',
+        name: 'John Responder',
+        phone: '+2651234567',
+        role: 'responder',
+        createdAt: DateTime.now(),
+        updatedAt: DateTime.now(),
+      );
+    }
   }
 
   /// Listens for incoming emergency requests via WebSocket
   void _listenForIncomingRequests(String responderId) {
-    EmergencyRepository.watchRequest(
-      responderId,
-      onUpdate: (request) {
+    _requestsSubscription?.cancel();
+    _requestsSubscription = EmergencyRepository.watchRequest(responderId).listen(
+      (request) {
         final currentState = state;
         final updatedRequests = [request, ...currentState.requests];
         
@@ -85,18 +102,13 @@ class ResponderDashboardCubit extends Cubit<ResponderDashboardState> {
 
   /// Refreshes the requests list
   Future<void> refreshRequests() async {
-    emit(state.copyWith(isLoading: true));
-    
     try {
-      final user = state.user;
-      if (user != null) {
-        final requests = await EmergencyRepository.getUserRequests(user.id);
-        
-        emit(state.copyWith(
-          isLoading: false,
-          requests: requests,
-        ));
-      }
+      final requests = await EmergencyRepository.getAllRequests();
+      
+      emit(state.copyWith(
+        isLoading: false,
+        requests: requests,
+      ));
     } catch (e) {
       emit(state.copyWith(
         isLoading: false,
@@ -143,7 +155,7 @@ class ResponderDashboardState {
     );
   }
 
-  const ResponderDashboardState.initial() : ResponderDashboardState();
+  const ResponderDashboardState.initial() : this();
 }
 
 /// Real-time responder dashboard with WebSocket-driven request list
@@ -213,34 +225,14 @@ class _ResponderDashboardState extends State<ResponderDashboard>
         // Header with new request indicator
         _buildHeader(state),
         
-        // Request list or map view
+        // Request list, map view, or profile view
         Expanded(
-          child: TabBarView(
-            controller: _tabController,
+          child: IndexedStack(
+            index: _currentIndex,
             children: [
-              // Active Requests Tab
-              Tab(
-                icon: const Icon(Icons.list),
-                text: 'Active',
-              ),
-              child: _buildRequestsList(state),
-            ),
-              
-              // Map View Tab
-              Tab(
-                icon: const Icon(Icons.map),
-                text: 'Map',
-              ),
-              child: _buildMapView(state),
-            ),
-              
-              // Profile Tab
-              Tab(
-                icon: const Icon(Icons.person),
-                text: 'Profile',
-              ),
-              child: _buildProfileView(state.user),
-            ),
+              _buildRequestsList(state),
+              _buildMapView(state),
+              _buildProfileView(state.user),
             ],
           ),
         ),
@@ -348,7 +340,7 @@ class _ResponderDashboardState extends State<ResponderDashboard>
                 color: Colors.grey[100],
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: const Center(
+              child: Center(
                 child: Text(
                   'Map view would be implemented here\nwith Google Maps integration',
                   textAlign: TextAlign.center,
@@ -452,7 +444,7 @@ class _ResponderDashboardState extends State<ResponderDashboard>
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(
+            Icon(
               Icons.inbox_outlined,
               size: 64,
               color: Colors.grey[400],
@@ -504,10 +496,193 @@ class _ResponderDashboardState extends State<ResponderDashboard>
     );
   }
 
-  /// Opens request detail screen
+  /// Opens request detail screen with interactive bottom sheet actions
   void _openRequestDetail(EmergencyRequest request) {
-    // This would navigate to request detail screen
-    // context.go('/request-detail', extra: {'requestId': request.id});
-    debugPrint('Open request detail: ${request.id}');
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            return Container(
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+              ),
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: Colors.grey[300],
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: Colors.red[50],
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.red[100]!),
+                        ),
+                        child: Text(
+                          request.type.typeDisplayName,
+                          style: const TextStyle(
+                            color: Colors.red,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                      const Spacer(),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: Colors.blue[50],
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          request.statusDisplayName.toUpperCase(),
+                          style: const TextStyle(
+                            color: Colors.blue,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Emergency Details',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    request.description.isNotEmpty ? request.description : 'No description provided.',
+                    style: const TextStyle(fontSize: 16, color: Colors.black87),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      const Icon(Icons.location_on, color: Colors.grey),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          request.address ?? 'GPS: ${request.latitude.toStringAsFixed(5)}, ${request.longitude.toStringAsFixed(5)}',
+                          style: const TextStyle(color: Colors.grey),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 24),
+                  const Divider(),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Update Alert Status',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: [
+                        _buildStatusActionButton(
+                          context,
+                          label: 'Accept',
+                          status: EmergencyStatus.accepted,
+                          currentStatus: request.status,
+                          color: Colors.orange,
+                          onPressed: () => _updateStatusAndRefresh(request.id, EmergencyStatus.accepted),
+                        ),
+                        const SizedBox(width: 8),
+                        _buildStatusActionButton(
+                          context,
+                          label: 'Dispatch',
+                          status: EmergencyStatus.inProgress,
+                          currentStatus: request.status,
+                          color: Colors.blue,
+                          onPressed: () => _updateStatusAndRefresh(request.id, EmergencyStatus.inProgress),
+                        ),
+                        const SizedBox(width: 8),
+                        _buildStatusActionButton(
+                          context,
+                          label: 'Complete',
+                          status: EmergencyStatus.completed,
+                          currentStatus: request.status,
+                          color: Colors.green,
+                          onPressed: () => _updateStatusAndRefresh(request.id, EmergencyStatus.completed),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildStatusActionButton(
+    BuildContext context, {
+    required String label,
+    required EmergencyStatus status,
+    required EmergencyStatus currentStatus,
+    required Color color,
+    required VoidCallback onPressed,
+  }) {
+    final isActive = currentStatus == status;
+    return ElevatedButton(
+      onPressed: onPressed,
+      style: ElevatedButton.styleFrom(
+        backgroundColor: isActive ? color : Colors.grey[200],
+        foregroundColor: isActive ? Colors.white : Colors.black87,
+        elevation: isActive ? 2 : 0,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+        ),
+      ),
+      child: Text(label),
+    );
+  }
+
+  Future<void> _updateStatusAndRefresh(String id, EmergencyStatus status) async {
+    try {
+      await EmergencyRepository.updateRequestStatus(id, status);
+      Navigator.of(context).pop();
+      _cubit.refreshRequests();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Emergency status updated to ${status.name}'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to update status: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
   }
 }

@@ -2,10 +2,54 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:provider/provider.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:geolocator/geolocator.dart';
 import '../providers/emergency_provider.dart';
+import '../services/location_service.dart';
 
-class ConfirmRequestScreen extends StatelessWidget {
+class ConfirmRequestScreen extends StatefulWidget {
   const ConfirmRequestScreen({super.key});
+
+  @override
+  State<ConfirmRequestScreen> createState() => _ConfirmRequestScreenState();
+}
+
+class _ConfirmRequestScreenState extends State<ConfirmRequestScreen> {
+  Position? _currentPosition;
+  bool _isLoadingLocation = true;
+  final Set<Marker> _markers = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _loadLocation();
+  }
+
+  Future<void> _loadLocation() async {
+    try {
+      final position = await LocationService.getCurrentLocation();
+      if (mounted) {
+        setState(() {
+          _currentPosition = position;
+          _isLoadingLocation = false;
+          _markers.add(
+            Marker(
+              markerId: const MarkerId('patient_location'),
+              position: LatLng(position.latitude, position.longitude),
+              icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue),
+              infoWindow: const InfoWindow(title: 'Your Location'),
+            ),
+          );
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoadingLocation = false;
+        });
+      }
+    }
+  }
 
   Widget _buildTypeCard(BuildContext context, String title, IconData icon, Color iconColor) {
     final provider = context.watch<EmergencyProvider>();
@@ -111,68 +155,56 @@ class ConfirmRequestScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 24),
 
-                // Map Placeholder with Pin
+                // Interactive Map View
                 Container(
                   height: 200,
                   decoration: BoxDecoration(
-                    color: Colors.teal[800], // Darker map tone
+                    color: Colors.teal[50],
                     borderRadius: BorderRadius.circular(20),
-                    image: const DecorationImage(
-                      image: NetworkImage('https://maps.googleapis.com/maps/api/staticmap?center=-13.9626,33.7741&zoom=15&size=600x300&maptype=satellite&key=NO_KEY'), // Fake map background
-                      fit: BoxFit.cover,
-                    ),
-                  ),
-                  child: Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      Positioned.fill(
-                        child: Opacity(
-                          opacity: 0.5,
-                          child: Container(
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(20),
-                              gradient: LinearGradient(
-                                colors: [Colors.green.shade900, Colors.teal.shade700],
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                      Positioned(
-                        top: 40,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                          decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.9),
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                          child: Row(
-                            children: [
-                              Container(
-                                width: 8,
-                                height: 8,
-                                decoration: const BoxDecoration(
-                                  color: Colors.red,
-                                  shape: BoxShape.circle,
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              const Text(
-                                'LIVE LOCATION\nPIN SET',
-                                style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                      const Center(
-                        child: Icon(
-                          LucideIcons.mapPin,
-                          color: Colors.blue,
-                          size: 48,
-                        ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.05),
+                        blurRadius: 10,
+                        offset: const Offset(0, 4),
                       ),
                     ],
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(20),
+                    child: _isLoadingLocation
+                        ? const Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                CircularProgressIndicator(),
+                                SizedBox(height: 12),
+                                Text('Fetching live location...', style: TextStyle(color: Colors.grey)),
+                              ],
+                            ),
+                          )
+                        : _currentPosition != null
+                            ? GoogleMap(
+                                initialCameraPosition: CameraPosition(
+                                  target: LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
+                                  zoom: 15.0,
+                                ),
+                                markers: _markers,
+                                myLocationEnabled: true,
+                                myLocationButtonEnabled: true,
+                                zoomControlsEnabled: false,
+                                tiltGesturesEnabled: false,
+                                rotateGesturesEnabled: false,
+                              )
+                            : Center(
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(LucideIcons.map, color: Colors.teal[600], size: 48),
+                                    const SizedBox(height: 8),
+                                    const Text('Failed to load GPS coordinates', style: TextStyle(color: Colors.grey)),
+                                  ],
+                                ),
+                              ),
                   ),
                 ),
                 const SizedBox(height: 32),

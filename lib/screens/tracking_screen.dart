@@ -198,31 +198,52 @@ class _TrackingScreenState extends State<TrackingScreen>
     return Container(
       margin: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.grey[100],
+        color: Colors.teal[50],
         borderRadius: BorderRadius.circular(12),
-      ),
-      child: Stack(
-        children: [
-          // Map placeholder
-          Center(
-            child: Text(
-              'Map View\n(Patient and Responder Tracking)',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: Colors.grey[600],
-              ),
-            ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
           ),
-          
-          // ETA countdown overlay
-          if (_currentRequest?.status == EmergencyStatus.inProgress)
-            Positioned(
-              top: 16,
-              left: 16,
-              right: 16,
-              child: _buildETACountdown(),
-            ),
         ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: Stack(
+          children: [
+            GoogleMap(
+              initialCameraPosition: CameraPosition(
+                target: LatLng(_currentRequest!.latitude, _currentRequest!.longitude),
+                zoom: 15.0,
+              ),
+              markers: _mapController?.markers ?? {},
+              polylines: _mapController?.polylines ?? {},
+              myLocationEnabled: true,
+              myLocationButtonEnabled: false,
+              zoomControlsEnabled: false,
+              tiltGesturesEnabled: false,
+              rotateGesturesEnabled: false,
+              onMapCreated: (controller) async {
+                final mapCtrl = MapController();
+                await mapCtrl.initialize(controller);
+                setState(() {
+                  _mapController = mapCtrl;
+                });
+                _updateMapMarkers(_currentRequest!);
+              },
+            ),
+            
+            // ETA countdown overlay
+            if (_currentRequest?.status == EmergencyStatus.inProgress)
+              Positioned(
+                top: 16,
+                left: 16,
+                right: 16,
+                child: _buildETACountdown(),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -405,6 +426,7 @@ class _TrackingScreenState extends State<TrackingScreen>
 
       // Clear existing markers
       _mapController!.clearMarkers();
+      _mapController!.clearRoute();
 
       // Add patient marker (static)
       await _mapController!.addMarker(
@@ -419,12 +441,13 @@ class _TrackingScreenState extends State<TrackingScreen>
       if (request.hasResponder) {
         // In a real implementation, you'd get responder's live location
         // For now, we'll add a marker near the patient
+        final responderLatLng = LatLng(
+          request.latitude + 0.003, // Slight offset for visibility
+          request.longitude + 0.003,
+        );
         await _mapController!.addMarker(
           id: 'responder',
-          position: LatLng(
-            request.latitude + 0.001, // Slight offset for visibility
-            request.longitude + 0.001,
-          ),
+          position: responderLatLng,
           iconType: 'ambulance',
           infoTitle: request.responderName ?? 'Responder',
           infoSnippet: 'En Route',
@@ -432,12 +455,37 @@ class _TrackingScreenState extends State<TrackingScreen>
 
         // Draw route
         await _mapController!.drawRoute(
-          LatLng(request.latitude + 0.001, request.longitude + 0.001),
+          responderLatLng,
           LatLng(request.latitude, request.longitude),
           routeId: 'route',
           color: Colors.blue,
           width: 4.0,
         );
+
+        // Animate camera to fit both markers
+        double minLat = request.latitude < responderLatLng.latitude ? request.latitude : responderLatLng.latitude;
+        double maxLat = request.latitude > responderLatLng.latitude ? request.latitude : responderLatLng.latitude;
+        double minLng = request.longitude < responderLatLng.longitude ? request.longitude : responderLatLng.longitude;
+        double maxLng = request.longitude > responderLatLng.longitude ? request.longitude : responderLatLng.longitude;
+
+        LatLngBounds bounds = LatLngBounds(
+          southwest: LatLng(minLat, minLng),
+          northeast: LatLng(maxLat, maxLng),
+        );
+        
+        await _mapController!.controller?.animateCamera(
+          CameraUpdate.newLatLngBounds(bounds, 50.0),
+        );
+      } else {
+        // If no responder yet, center map on patient's coordinate
+        await _mapController!.animateCameraTo(
+          LatLng(request.latitude, request.longitude),
+          zoom: 15.0,
+        );
+      }
+
+      if (mounted) {
+        setState(() {}); // Trigger redraw
       }
     } catch (e) {
       debugPrint('Failed to update map markers: $e');

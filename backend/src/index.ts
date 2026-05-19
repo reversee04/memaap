@@ -1,38 +1,71 @@
+/**
+ * index.ts — Express + Socket.IO entry point
+ *
+ * Mounts all API routes. The SQLite database is initialised as a side-effect
+ * of importing config/database.ts (tables are created on first run).
+ */
+
 import express, { Request, Response } from 'express';
 import cors from 'cors';
 import { createServer } from 'http';
 import { Server, Socket } from 'socket.io';
 import * as dotenv from 'dotenv';
 
-// Load environment variables
+// Load env before anything else
 dotenv.config();
 
-const app = express();
-const server = createServer(app);
-const io = new Server(server);
+// Importing database triggers table creation — must be before routes
+import './config/database';
 
-// Middleware
+// Route handlers
+import authRoutes      from './routes/auth.routes';
+import userRoutes      from './routes/users.routes';
+import emergencyRoutes from './routes/emergency.routes';
+import hospitalRoutes  from './routes/hospitals.routes';
+
+const app    = express();
+const server = createServer(app);
+const io     = new Server(server, { cors: { origin: '*' } });
+
+// ── Middleware ────────────────────────────────────────────────────────────────
+
 app.use(cors());
 app.use(express.json());
 
-// Basic health check endpoint
-app.get('/api/health', (req: Request, res: Response) => {
+// ── Routes ────────────────────────────────────────────────────────────────────
+
+app.use('/api/auth',      authRoutes);
+app.use('/api/users',     userRoutes);
+app.use('/api/emergency', emergencyRoutes);
+app.use('/api/hospitals', hospitalRoutes);
+
+// Health check — Flutter's ApiClient uses this to confirm connectivity
+app.get('/api/health', (_req: Request, res: Response) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// Start server
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+// ── Socket.IO — real-time emergency updates ──────────────────────────────────
 
-// WebSocket connection
 io.on('connection', (socket: Socket) => {
-  console.log('Client connected:', socket.id);
-  
+  console.log('[WS] Client connected:', socket.id);
+
+  // Responder or patient can join a room keyed by requestId to get live updates
+  socket.on('join_request', (requestId: string) => {
+    socket.join(`request_${requestId}`);
+    console.log(`[WS] ${socket.id} joined room: request_${requestId}`);
+  });
+
   socket.on('disconnect', () => {
-    console.log('Client disconnected:', socket.id);
+    console.log('[WS] Client disconnected:', socket.id);
   });
 });
 
+// Export io so routes can emit events (e.g. broadcast status changes)
 export { app, io };
+
+// ── Start server ─────────────────────────────────────────────────────────────
+
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => {
+  console.log(`[SERVER] Running on http://localhost:${PORT}`);
+});

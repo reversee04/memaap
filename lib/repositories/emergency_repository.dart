@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'dart:async';
 import 'package:sqflite/sqflite.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
@@ -178,6 +179,28 @@ class EmergencyRepository {
       // Fallback to local database
       return await _getUserRequestsFromDatabase(userId, status, limit);
     }
+  }
+
+  /// Gets all emergency requests from the local database
+  static Future<List<EmergencyRequest>> getAllRequests() async {
+    try {
+      final db = await DatabaseHelper().database;
+      final results = await db.query(
+        DatabaseHelper.tableEmergencyRequests,
+        orderBy: 'created_at DESC',
+      );
+      return results
+          .map((row) => EmergencyRequest.fromDatabaseMap(row))
+          .toList();
+    } catch (e) {
+      debugPrint('Failed to get all requests: $e');
+      return [];
+    }
+  }
+
+  /// Stores a request in the local database directly (public wrapper)
+  static Future<void> storeRequestLocally(EmergencyRequest request) async {
+    await _storeRequestLocally(request);
   }
 
   /// Updates the status of an emergency request

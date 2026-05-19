@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 /// Enum for notification types
 enum NotificationType {
   emergencyUpdate,

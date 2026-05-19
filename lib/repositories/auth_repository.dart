@@ -49,11 +49,11 @@ class AuthRepository {
   /// Throws [ValidationException] if validation fails
   /// Throws [NetworkException] if network error occurs
   /// Throws [AuthException] for other authentication errors
-  static Future<UserModel> register(UserRegistrationModel model) async {
+  static Future<Map<String, dynamic>> register(UserRegistrationModel model) async {
     try {
       final response = await http
           .post(
-            Uri.parse('$_baseUrl/auth/register'),
+            Uri.parse('$_baseUrl/api/auth/register'),
             headers: {
               'Content-Type': 'application/json',
               'Accept': 'application/json',
@@ -66,7 +66,11 @@ class AuthRepository {
 
       switch (response.statusCode) {
         case 201:
-          return UserModel.fromJson(responseData['user']);
+          return {
+            'user': UserModel.fromJson(responseData['user']),
+            'token': responseData['token'] as String,
+            'refreshToken': responseData['refreshToken'] as String,
+          };
         case 409:
           throw DuplicatePhoneException(responseData['message'] ?? 'Phone number already registered');
         case 400:
@@ -102,7 +106,7 @@ class AuthRepository {
     try {
       final response = await http
           .post(
-            Uri.parse('$_baseUrl/auth/login'),
+            Uri.parse('$_baseUrl/api/auth/login'),
             headers: {
               'Content-Type': 'application/json',
               'Accept': 'application/json',
@@ -157,7 +161,7 @@ class AuthRepository {
     try {
       final response = await http
           .post(
-            Uri.parse('$_baseUrl/auth/refresh'),
+            Uri.parse('$_baseUrl/api/auth/refresh'),
             headers: {
               'Content-Type': 'application/json',
               'Accept': 'application/json',
@@ -205,7 +209,7 @@ class AuthRepository {
     try {
       final response = await http
           .post(
-            Uri.parse('$_baseUrl/auth/logout'),
+            Uri.parse('$_baseUrl/api/auth/logout'),
             headers: {
               'Content-Type': 'application/json',
               'Accept': 'application/json',
@@ -246,7 +250,7 @@ class AuthRepository {
     try {
       final response = await http
           .get(
-            Uri.parse('$_baseUrl/auth/verify'),
+            Uri.parse('$_baseUrl/api/auth/verify'),
             headers: {
               'Content-Type': 'application/json',
               'Accept': 'application/json',

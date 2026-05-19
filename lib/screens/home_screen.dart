@@ -3,10 +3,45 @@ import 'package:go_router/go_router.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:geolocator/geolocator.dart';
 import '../providers/emergency_provider.dart';
+import '../services/location_service.dart';
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  Position? _currentPosition;
+  bool _isLoadingLocation = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadLocation();
+  }
+
+  Future<void> _loadLocation() async {
+    try {
+      final position = await LocationService.getCurrentLocation();
+      if (mounted) {
+        setState(() {
+          _currentPosition = position;
+          _isLoadingLocation = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoadingLocation = false;
+        });
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -254,16 +289,62 @@ class HomeScreen extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 24),
-              
-              // Map Placeholder
+
+              // Map Preview
               Container(
-                height: 100,
+                height: 120,
                 decoration: BoxDecoration(
-                  color: Colors.teal[100],
+                  color: Colors.teal[50],
                   borderRadius: BorderRadius.circular(16),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.05),
+                      blurRadius: 10,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
                 ),
-                child: Center(
-                  child: Icon(LucideIcons.map, color: Colors.teal[600], size: 48),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(16),
+                  child: _isLoadingLocation
+                      ? const Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              SizedBox(
+                                width: 24,
+                                height: 24,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              ),
+                              SizedBox(height: 8),
+                              Text('Locating GPS...', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                            ],
+                          ),
+                        )
+                      : _currentPosition != null
+                          ? GoogleMap(
+                              initialCameraPosition: CameraPosition(
+                                target: LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
+                                zoom: 15.0,
+                              ),
+                              myLocationEnabled: true,
+                              myLocationButtonEnabled: false,
+                              zoomGesturesEnabled: false,
+                              scrollGesturesEnabled: false,
+                              tiltGesturesEnabled: false,
+                              rotateGesturesEnabled: false,
+                              mapToolbarEnabled: false,
+                            )
+                          : Center(
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(LucideIcons.map, color: Colors.teal[600], size: 36),
+                                  const SizedBox(height: 4),
+                                  const Text('Location services disabled', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                                ],
+                              ),
+                            ),
                 ),
               ),
             ],

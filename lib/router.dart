@@ -2,12 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import 'screens/login_screen.dart';
+import 'screens/register_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/confirm_request_screen.dart';
 import 'screens/tracking_screen.dart';
 import 'screens/timeline_screen.dart';
 import 'screens/hospitals_screen.dart';
 import 'screens/profile_screen.dart';
+import 'screens/responder_dashboard.dart';
 import 'widgets/bottom_nav_bar.dart';
 
 final _rootNavigatorKey = GlobalKey<NavigatorState>();
@@ -23,6 +25,14 @@ final goRouter = GoRouter(
     GoRoute(
       path: '/login',
       builder: (context, state) => const LoginScreen(),
+    ),
+    GoRoute(
+      path: '/register',
+      builder: (context, state) => const RegisterScreen(),
+    ),
+    GoRoute(
+      path: '/responder',
+      builder: (context, state) => const ResponderDashboard(),
     ),
     StatefulShellRoute.indexedStack(
       builder: (context, state, navigationShell) {

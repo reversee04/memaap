@@ -1,10 +1,22 @@
-import { Pool, PoolClient } from 'pg';
+/**
+ * auth.service.ts
+ *
+ * Handles registration, login, JWT issuance, token refresh, and logout.
+ *
+ * CHANGES FROM PostgreSQL VERSION:
+ *  - All `pool.connect()` / `client.query()` replaced with synchronous
+ *    better-sqlite3 `db.prepare().run()` / `.get()` / `.all()`
+ *  - RSA key files removed; uses HMAC-SHA256 with JWT_SECRET env variable
+ *  - No more PoolClient to release — SQLite is connection-free
+ */
+
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
-import fs from 'fs';
-import path from 'path';
+import { v4 as uuidv4 } from 'uuid';
+import db from '../config/database';
 
-// Custom error classes
+// ── Custom errors ────────────────────────────────────────────────────────────
+
 export class AuthError extends Error {
   constructor(message: string, public statusCode: number = 401) {
     super(message);
@@ -19,388 +31,219 @@ export class ValidationError extends Error {
   }
 }
 
-// User interface
+// ── Interfaces ───────────────────────────────────────────────────────────────
+
 export interface User {
   id: string;
   name: string;
   phone: string;
-  email?: string;
-  role: 'patient' | 'responder';
-  created_at: Date;
-  updated_at: Date;
+  email?: string | null;
+  role: 'patient' | 'responder' | 'admin';
+  status: string;
+  created_at: string;
+  updated_at: string;
 }
 
-// Auth response interface
 export interface AuthResponse {
   user: User;
   token: string;
   refreshToken: string;
 }
 
-// Database connection
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
-});
+// ── JWT configuration ────────────────────────────────────────────────────────
 
-// JWT keys
-const privateKey = fs.readFileSync(path.join(__dirname, '../../keys/private.key'), 'utf8');
-const publicKey = fs.readFileSync(path.join(__dirname, '../../keys/public.key'), 'utf8');
+const JWT_SECRET = process.env.JWT_SECRET || 'memaap-dev-secret-change-in-production';
+const ACCESS_TOKEN_EXPIRY = '15m';
+const REFRESH_TOKEN_EXPIRY = '7d';
+const REFRESH_TOKEN_DAYS = 7;
 
-/**
- * AuthService class that handles authentication, authorization, and token management
- * for the Mobile Emergency Medical Assistance App backend.
- * 
- * Provides registration, login, JWT issuance, token refresh, and logout functionality
- * with PostgreSQL token blacklisting via revoked_tokens table.
- */
+// ── AuthService ──────────────────────────────────────────────────────────────
+
 export class AuthService {
+
   /**
-   * Registers a new user with the provided credentials
-   * 
-   * @param name - User's full name
-   * @param phone - User's phone number (must be unique)
-   * @param email - User's email address (optional)
-   * @param password - User's password (will be hashed)
-   * @param role - User role ('patient' or 'responder')
-   * @returns Promise resolving to {user, token, refreshToken}
-   * @throws ValidationError if validation fails
-   * @throws AuthError if phone already exists
+   * Registers a new user (patient or responder).
+   * Returns the created user plus fresh JWT tokens.
    */
   static async register(
     name: string,
     phone: string,
     email: string | undefined,
     password: string,
-    role: 'patient' | 'responder'
+    role: 'patient' | 'responder',
   ): Promise<AuthResponse> {
-    const client = await pool.connect();
-    
-    try {
-      // Validate input
-      this.validateRegistrationInput(name, phone, email, password, role);
+    // Validate fields
+    this._validateInput(name, phone, email, password, role);
 
-      // Check if phone already exists
-      const existingUser = await client.query(
-        'SELECT id FROM users WHERE phone = $1',
-        [phone]
-      );
-
-      if (existingUser.rows.length > 0) {
-        throw new AuthError('Phone number already registered', 409);
-      }
-
-      // Hash password
-      const saltRounds = 12;
-      const hashedPassword = await bcrypt.hash(password, saltRounds);
-
-      // Insert user
-      const result = await client.query(
-        `INSERT INTO users (name, phone, email, password_hash, role, created_at, updated_at) 
-         VALUES ($1, $2, $3, $4, $5, NOW(), NOW()) 
-         RETURNING id, name, phone, email, role, created_at, updated_at`,
-        [name, phone, email, hashedPassword, role]
-      );
-
-      const user = result.rows[0] as User;
-
-      // Generate tokens
-      const { token, refreshToken } = await this.generateTokens(user);
-
-      // Store refresh token
-      await this.storeRefreshToken(client, user.id, refreshToken);
-
-      await client.query('COMMIT');
-      
-      return { user, token, refreshToken };
-    } catch (error: any) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
+    // Check phone uniqueness
+    const existing = db.prepare('SELECT id FROM users WHERE phone = ?').get(phone);
+    if (existing) {
+      throw new AuthError('Phone number already registered', 409);
     }
+
+    // Hash password (cost factor 12)
+    const passwordHash = await bcrypt.hash(password, 12);
+    const userId = uuidv4();
+
+    // Insert user
+    db.prepare(`
+      INSERT INTO users (id, name, phone, email, password_hash, role, status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, 'active', datetime('now'), datetime('now'))
+    `).run(userId, name.trim(), phone.trim(), email?.trim() || null, passwordHash, role);
+
+    // Fetch the newly created user (avoids returning password_hash)
+    const user = db.prepare(
+      'SELECT id, name, phone, email, role, status, created_at, updated_at FROM users WHERE id = ?'
+    ).get(userId) as User;
+
+    const { token, refreshToken } = this._generateTokens(user);
+    this._storeRefreshToken(user.id, refreshToken);
+
+    return { user, token, refreshToken };
   }
 
   /**
-   * Authenticates a user with phone and password
-   * 
-   * @param phone - User's phone number
-   * @param password - User's password
-   * @returns Promise resolving to {user, token, refreshToken}
-   * @throws AuthError if credentials are invalid
+   * Authenticates a user with phone + password.
+   * Returns the user profile and fresh JWT tokens.
    */
   static async login(phone: string, password: string): Promise<AuthResponse> {
-    const client = await pool.connect();
-    
-    try {
-      // Validate input
-      if (!phone || !password) {
-        throw new ValidationError('Phone and password are required');
-      }
-
-      // Find user by phone
-      const result = await client.query(
-        `SELECT id, name, phone, email, password_hash, role, created_at, updated_at 
-         FROM users WHERE phone = $1`,
-        [phone]
-      );
-
-      if (result.rows.length === 0) {
-        throw new AuthError('Invalid credentials');
-      }
-
-      const user = result.rows[0];
-
-      // Verify password
-      const isValidPassword = await bcrypt.compare(password, user.password_hash);
-      
-      if (!isValidPassword) {
-        throw new AuthError('Invalid credentials');
-      }
-
-      // Remove password hash from user object
-      const { password_hash, ...userWithoutPassword } = user;
-
-      // Generate tokens
-      const { token, refreshToken } = await this.generateTokens(userWithoutPassword as User);
-
-      // Store refresh token
-      await this.storeRefreshToken(client, user.id, refreshToken);
-
-      await client.query('COMMIT');
-      
-      return { user: userWithoutPassword as User, token, refreshToken };
-    } catch (error: any) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
+    if (!phone || !password) {
+      throw new ValidationError('Phone and password are required');
     }
+
+    // Fetch user (includes password_hash for comparison)
+    const row = db.prepare('SELECT * FROM users WHERE phone = ?').get(phone) as any;
+    if (!row) {
+      throw new AuthError('Invalid credentials');
+    }
+
+    if (row.status === 'banned') {
+      throw new AuthError('Account has been suspended', 403);
+    }
+
+    // Verify password
+    const valid = await bcrypt.compare(password, row.password_hash);
+    if (!valid) {
+      throw new AuthError('Invalid credentials');
+    }
+
+    // Strip password_hash before returning
+    const { password_hash, ...user } = row;
+
+    const { token, refreshToken } = this._generateTokens(user as User);
+    this._storeRefreshToken(user.id, refreshToken);
+
+    return { user: user as User, token, refreshToken };
   }
 
   /**
-   * Verifies a JWT token and checks if it's not revoked
-   * 
-   * @param token - JWT token to verify
-   * @returns Promise resolving to the decoded token payload
-   * @throws AuthError if token is invalid or revoked
+   * Verifies an access token is valid and not revoked.
+   * Returns the decoded JWT payload.
    */
   static async verifyToken(token: string): Promise<any> {
-    try {
-      // Check if token is revoked
-      const isRevoked = await this.isTokenRevoked(token);
-      if (isRevoked) {
-        throw new AuthError('Token has been revoked');
-      }
+    // Check revocation list first
+    const revoked = db.prepare('SELECT id FROM revoked_tokens WHERE token = ?').get(token);
+    if (revoked) {
+      throw new AuthError('Token has been revoked');
+    }
 
-      // Verify token with public key
-      const decoded = jwt.verify(token, publicKey, { algorithms: ['RS256'] });
-      return decoded;
-    } catch (error: any) {
-      if (error instanceof jwt.JsonWebTokenError) {
-        throw new AuthError('Invalid token');
-      }
-      throw error;
+    try {
+      return jwt.verify(token, JWT_SECRET);
+    } catch {
+      throw new AuthError('Invalid or expired token');
     }
   }
 
   /**
-   * Refreshes an access token using a valid refresh token
-   * 
-   * @param oldToken - Current access token
-   * @returns Promise resolving to {user, token, refreshToken}
-   * @throws AuthError if refresh token is invalid
+   * Exchanges a valid refresh token for a new access token + new refresh token.
+   * Old refresh token is deleted (token rotation).
    */
-  static async refreshToken(oldToken: string): Promise<AuthResponse> {
-    const client = await pool.connect();
-    
+  static async refreshToken(oldRefreshToken: string): Promise<AuthResponse> {
+    let decoded: any;
     try {
-      // Decode old token to get user info (without verification for refresh)
-      const decoded = jwt.decode(oldToken) as any;
-      
-      if (!decoded || !decoded.userId) {
-        throw new AuthError('Invalid token for refresh');
-      }
-
-      // Find valid refresh token for this user
-      const refreshTokenResult = await client.query(
-        `SELECT token, expires_at FROM refresh_tokens 
-         WHERE user_id = $1 AND expires_at > NOW() LIMIT 1`,
-        [decoded.userId]
-      );
-
-      if (refreshTokenResult.rows.length === 0) {
-        throw new AuthError('No valid refresh token found');
-      }
-
-      // Get user data
-      const userResult = await client.query(
-        `SELECT id, name, phone, email, role, created_at, updated_at 
-         FROM users WHERE id = $1`,
-        [decoded.userId]
-      );
-
-      if (userResult.rows.length === 0) {
-        throw new AuthError('User not found');
-      }
-
-      const user = userResult.rows[0] as User;
-
-      // Generate new tokens
-      const { token, refreshToken } = await this.generateTokens(user);
-
-      // Store new refresh token and invalidate old one
-      await client.query('DELETE FROM refresh_tokens WHERE token = $1', [refreshTokenResult.rows[0].token]);
-      await this.storeRefreshToken(client, user.id, refreshToken);
-
-      await client.query('COMMIT');
-      
-      return { user, token, refreshToken };
-    } catch (error: any) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
+      decoded = jwt.verify(oldRefreshToken, JWT_SECRET);
+    } catch {
+      throw new AuthError('Invalid refresh token');
     }
+
+    // Check DB: token must exist and not be expired
+    const stored = db.prepare(
+      "SELECT * FROM refresh_tokens WHERE token = ? AND expires_at > datetime('now')"
+    ).get(oldRefreshToken) as any;
+
+    if (!stored) {
+      throw new AuthError('Refresh token expired or not found');
+    }
+
+    // Load user
+    const user = db.prepare(
+      'SELECT id, name, phone, email, role, status, created_at, updated_at FROM users WHERE id = ?'
+    ).get(decoded.userId) as User | undefined;
+
+    if (!user) {
+      throw new AuthError('User not found');
+    }
+
+    // Rotate tokens
+    db.prepare('DELETE FROM refresh_tokens WHERE token = ?').run(oldRefreshToken);
+    const { token, refreshToken } = this._generateTokens(user);
+    this._storeRefreshToken(user.id, refreshToken);
+
+    return { user, token, refreshToken };
   }
 
   /**
-   * Logs out a user by revoking their access token
-   * 
-   * @param userId - User ID
-   * @param token - Access token to revoke
-   * @returns Promise resolving when logout is complete
+   * Logs out a user: revokes their access token and deletes all their refresh tokens.
    */
   static async logout(userId: string, token: string): Promise<void> {
-    const client = await pool.connect();
-    
-    try {
-      // Add token to revoked_tokens table
-      await client.query(
-        'INSERT INTO revoked_tokens (token, revoked_at) VALUES ($1, NOW())',
-        [token]
-      );
-
-      // Remove user's refresh tokens
-      await client.query(
-        'DELETE FROM refresh_tokens WHERE user_id = $1',
-        [userId]
-      );
-
-      await client.query('COMMIT');
-    } catch (error: any) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+    db.prepare(
+      "INSERT OR IGNORE INTO revoked_tokens (token, revoked_at) VALUES (?, datetime('now'))"
+    ).run(token);
+    db.prepare('DELETE FROM refresh_tokens WHERE user_id = ?').run(userId);
   }
 
-  /**
-   * Checks if a token is revoked
-   * 
-   * @param token - Token to check
-   * @returns Promise resolving to true if token is revoked, false otherwise
-   */
-  private static async isTokenRevoked(token: string): Promise<boolean> {
-    const result = await pool.query(
-      'SELECT token FROM revoked_tokens WHERE token = $1 LIMIT 1',
-      [token]
+  // ── Private helpers ────────────────────────────────────────────────────────
+
+  private static _generateTokens(user: User): { token: string; refreshToken: string } {
+    const base = { userId: user.id, phone: user.phone, role: user.role };
+
+    const token = jwt.sign(
+      { ...base, type: 'access' },
+      JWT_SECRET,
+      { expiresIn: ACCESS_TOKEN_EXPIRY }
     );
-    
-    return result.rows.length > 0;
-  }
 
-  /**
-   * Generates JWT access and refresh tokens for a user
-   * 
-   * @param user - User object
-   * @returns Promise resolving to {token, refreshToken}
-   */
-  private static async generateTokens(user: User): Promise<{token: string, refreshToken: string}> {
-    // Access token (short-lived)
-    const tokenPayload = {
-      userId: user.id,
-      phone: user.phone,
-      role: user.role,
-      type: 'access'
-    };
-
-    const token = jwt.sign(tokenPayload, privateKey, {
-      algorithm: 'RS256',
-      expiresIn: '15m',
-      issuer: 'memaap-backend',
-      audience: 'memaap-mobile'
-    });
-
-    // Refresh token (long-lived)
-    const refreshTokenPayload = {
-      userId: user.id,
-      type: 'refresh'
-    };
-
-    const refreshToken = jwt.sign(refreshTokenPayload, privateKey, {
-      algorithm: 'RS256',
-      expiresIn: '7d',
-      issuer: 'memaap-backend',
-      audience: 'memaap-mobile'
-    });
+    const refreshToken = jwt.sign(
+      { userId: user.id, type: 'refresh' },
+      JWT_SECRET,
+      { expiresIn: REFRESH_TOKEN_EXPIRY }
+    );
 
     return { token, refreshToken };
   }
 
-  /**
-   * Stores a refresh token in the database
-   * 
-   * @param client - Database client
-   * @param userId - User ID
-   * @param refreshToken - Refresh token to store
-   */
-  private static async storeRefreshToken(client: PoolClient, userId: string, refreshToken: string): Promise<void> {
+  private static _storeRefreshToken(userId: string, refreshToken: string): void {
     const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 7); // 7 days from now
+    expiresAt.setDate(expiresAt.getDate() + REFRESH_TOKEN_DAYS);
 
-    await client.query(
-      'INSERT INTO refresh_tokens (user_id, token, expires_at) VALUES ($1, $2, $3)',
-      [userId, refreshToken, expiresAt]
-    );
+    db.prepare(
+      'INSERT INTO refresh_tokens (user_id, token, expires_at) VALUES (?, ?, ?)'
+    ).run(userId, refreshToken, expiresAt.toISOString());
   }
 
-  /**
-   * Validates registration input data
-   * 
-   * @param name - User name
-   * @param phone - User phone
-   * @param email - User email
-   * @param password - User password
-   * @param role - User role
-   * @throws ValidationError if validation fails
-   */
-  private static validateRegistrationInput(
-    name: string,
-    phone: string,
-    email: string | undefined,
-    password: string,
-    role: string
+  private static _validateInput(
+    name: string, phone: string, email: string | undefined,
+    password: string, role: string
   ): void {
-    if (!name || name.trim().length < 2) {
-      throw new ValidationError('Name must be at least 2 characters long');
-    }
-
-    if (!phone || !/^\+?[1-9]\d{1,14}$/.test(phone)) {
+    if (!name || name.trim().length < 2)
+      throw new ValidationError('Name must be at least 2 characters');
+    if (!phone || !/^\+?[1-9]\d{1,14}$/.test(phone.trim()))
       throw new ValidationError('Invalid phone number format');
-    }
-
-    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()))
       throw new ValidationError('Invalid email format');
-    }
-
-    if (!password || password.length < 8) {
-      throw new ValidationError('Password must be at least 8 characters long');
-    }
-
-    if (!['patient', 'responder'].includes(role)) {
-      throw new ValidationError('Role must be either "patient" or "responder"');
-    }
+    if (!password || password.length < 8)
+      throw new ValidationError('Password must be at least 8 characters');
+    if (!['patient', 'responder'].includes(role))
+      throw new ValidationError('Role must be "patient" or "responder"');
   }
 }

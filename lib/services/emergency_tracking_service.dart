@@ -139,29 +139,36 @@ class EmergencyTrackingService {
     });
   }
 
-  /// Polls request status via HTTP
+  /// Polls request status via HTTP/SQLite
   static Future<void> _pollRequestStatus(String requestId) async {
     try {
-      final response = await ApiClient.get('/emergency/$requestId');
-      final request = EmergencyRequest.fromJson(response['emergency']);
-      
-      // Check if status has changed
-      if (_lastKnownState == null || 
-          _lastKnownState!.status != request.status ||
-          _lastKnownState!.updatedAt != request.updatedAt) {
-        
-        _lastKnownState = request;
-        _streamController?.add(request);
-        
-        debugPrint('Received update via polling: ${request.statusDisplayName}');
+      EmergencyRequest? request;
+      try {
+        final response = await ApiClient.get('/emergency/$requestId');
+        request = EmergencyRequest.fromJson(response['emergency']);
+      } catch (e) {
+        // Fallback to local SQLite database in guest/offline/mock mode
+        request = await EmergencyRepository.getRequestById(requestId);
       }
       
-      // Stop polling if request is resolved or cancelled
-      if (request.status == EmergencyStatus.completed ||
-          request.status == EmergencyStatus.cancelled) {
-        _closeTrackingStream();
+      if (request != null) {
+        // Check if status has changed
+        if (_lastKnownState == null || 
+            _lastKnownState!.status != request.status ||
+            _lastKnownState!.updatedAt != request.updatedAt) {
+          
+          _lastKnownState = request;
+          _streamController?.add(request);
+          
+          debugPrint('Received update via local/poll: ${request.statusDisplayName}');
+        }
+        
+        // Stop polling if request is resolved or cancelled
+        if (request.status == EmergencyStatus.completed ||
+            request.status == EmergencyStatus.cancelled) {
+          _closeTrackingStream();
+        }
       }
-      
     } catch (e) {
       debugPrint('Polling failed: $e');
     }

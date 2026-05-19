@@ -7,6 +7,8 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:uuid/uuid.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart' as flutter_secure_storage;
+import 'package:shared_preferences/shared_preferences.dart' as shared_preferences;
 import '../models/notification_model.dart';
 import '../models/user_model.dart';
 import '../services/api_client.dart';
@@ -106,16 +108,7 @@ class NotificationService {
       _localNotifications = FlutterLocalNotificationsPlugin();
       
       // Android initialization
-      const androidSettings = AndroidInitializationSettings(
-        '@mipmap/ic_launcher',
-        _notificationChannelId,
-        channelName: _notificationChannelName,
-        channelDescription: _notificationChannelDescription,
-        importance: Importance.high,
-        priority: Priority.high,
-        enableVibration: true,
-        playSound: true,
-      );
+      const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
 
       // iOS initialization
       const iosSettings = DarwinInitializationSettings(
@@ -124,24 +117,28 @@ class NotificationService {
         requestSoundPermission: true,
       );
 
+      const initSettings = InitializationSettings(
+        android: androidSettings,
+        iOS: iosSettings,
+      );
+
       await _localNotifications!.initialize(
-        androidSettings,
-        iosSettings,
-        onDidReceiveNotification: _onNotificationReceived,
+        initSettings,
         onDidReceiveNotificationResponse: _onNotificationTapped,
       );
 
       // Create notification channel (Android)
       if (Platform.isAndroid) {
-        await _localNotifications!.createNotificationChannel(
+        final androidPlugin = _localNotifications!
+            .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+        await androidPlugin?.createNotificationChannel(
           AndroidNotificationChannel(
             _notificationChannelId,
             _notificationChannelName,
-            channelDescription: _notificationChannelDescription,
+            description: _notificationChannelDescription,
             importance: Importance.high,
-            priority: Priority.high,
-            enableVibration: true,
             playSound: true,
+            enableVibration: true,
           ),
         );
       }
@@ -163,7 +160,7 @@ class NotificationService {
         _deviceToken = uuid.toString();
         
         // Store the token
-        await prefs.write(key: _deviceTokenKey, value: _deviceToken);
+        await prefs.write(key: _deviceTokenKey, value: _deviceToken!);
         
         debugPrint('Generated new device token: $_deviceToken');
       } else {
@@ -233,7 +230,7 @@ class NotificationService {
       
       // Show local notification if app is in background
       if (!_isForeground) {
-        _showLocalNotification(
+        showLocalNotification(
           title: notification.title,
           body: notification.body,
           payload: jsonEncode(notification.toJson()),
@@ -306,13 +303,12 @@ class NotificationService {
       final notificationDetails = NotificationDetails(
         android: AndroidNotificationDetails(
           _notificationChannelId,
-          title,
-          body: body,
+          _notificationChannelName,
+          channelDescription: _notificationChannelDescription,
           importance: Importance.high,
           priority: Priority.high,
           enableVibration: true,
           playSound: true,
-          icon: '@mipmap/ic_launcher',
         ),
         iOS: const DarwinNotificationDetails(
           presentAlert: true,
@@ -340,7 +336,7 @@ class NotificationService {
       if (payload != null && payload.isNotEmpty) {
         final notificationData = jsonDecode(payload);
         final notification = NotificationModel.fromJson(notificationData);
-        _onNotificationTapped(jsonEncode(notification.toJson()));
+        onNotificationTapped(jsonEncode(notification.toJson()));
       }
     } catch (e) {
       debugPrint('Failed to handle notification tap: $e');
@@ -457,24 +453,12 @@ class NotificationService {
   }
 
   /// Gets secure storage instance
-  static Future<flutter_secure_storage.FlutterSecureStorage> _getSecureStorage() async {
-    // This would use flutter_secure_storage package
-    // For now, we'll use SharedPreferences as fallback
-    // In production, you'd use:
-    // return const FlutterSecureStorage();
-    
-    // Fallback implementation
+  static Future<MockSharedPreferences> _getSecureStorage() async {
     return _getSharedPreferences();
   }
 
   /// Gets shared preferences as fallback
-  Future<shared_preferences.SharedPreferences> _getSharedPreferences() async {
-    // This would use shared_preferences package
-    // For now, we'll return a mock instance
-    // In production, you'd use:
-    // return await SharedPreferences.getInstance();
-    
-    // Mock implementation - replace with actual SharedPreferences
+  static Future<MockSharedPreferences> _getSharedPreferences() async {
     return MockSharedPreferences();
   }
 

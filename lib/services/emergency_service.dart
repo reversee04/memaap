@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:flutter/foundation.dart';
 import 'package:geocoding/geocoding.dart';
 import '../models/emergency_request_model.dart';
@@ -302,8 +303,7 @@ class EmergencyService {
 
   /// Navigates to tracking screen
   static void _navigateToTrackingScreen(BuildContext context, EmergencyRequest request) {
-    // This would navigate to your tracking screen
-    // context.go('/tracking', extra: {'requestId': request.id});
+    context.go('/tracking', extra: {'requestId': request.id});
     debugPrint('Navigate to tracking screen for request: ${request.id}');
   }
 
@@ -344,7 +344,26 @@ class EmergencyService {
       Navigator.of(context, rootNavigator: true).pop();
 
       if (success) {
-        _showSuccessSnackBar(context, 'SMS emergency alert sent!');
+        _showSuccessSnackBar(context, 'Emergency alert sent via SMS successfully!');
+        
+        final offlineRequest = EmergencyRequest(
+          id: 'sms_${DateTime.now().millisecondsSinceEpoch}',
+          userId: user.id,
+          type: type,
+          description: description ?? _defaultDescription,
+          latitude: position.latitude,
+          longitude: position.longitude,
+          address: 'Sent via SMS fallback',
+          status: EmergencyStatus.pending,
+          createdAt: DateTime.now(),
+          updatedAt: DateTime.now(),
+        );
+
+        // Store locally directly
+        await EmergencyRepository.storeRequestLocally(offlineRequest);
+
+        // Navigate to tracking screen
+        _navigateToTrackingScreen(context, offlineRequest);
         return true;
       } else {
         _showErrorSnackBar(context, 'Failed to send SMS emergency alert');

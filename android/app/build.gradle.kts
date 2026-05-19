@@ -1,9 +1,23 @@
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("kotlin-android")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
+
+val envFile = File(projectDir, "../../.env")
+val envProperties = Properties()
+if (envFile.exists()) {
+    FileInputStream(envFile).use { envProperties.load(it) }
+}
+val googleMapsKey = envProperties.getProperty("GOOGLE_MAPS_KEY") ?: "your_google_maps_api_key_here"
+
+println("MEMAAP_DEBUG: envFile path is ${envFile.absolutePath}")
+println("MEMAAP_DEBUG: envFile exists: ${envFile.exists()}")
+println("MEMAAP_DEBUG: loaded googleMapsKey: $googleMapsKey")
 
 android {
     namespace = "com.example.memaap"
@@ -29,6 +43,7 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        manifestPlaceholders["googleMapsKey"] = googleMapsKey
     }
 
     buildTypes {
@@ -39,7 +54,7 @@ android {
         }
     }
     dependencies {
-    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
+        coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
     }
 
 }

@@ -6,6 +6,7 @@ import '../repositories/auth_repository.dart';
 import '../models/user_model.dart';
 import '../models/user_registration_model.dart';
 import '../providers/auth_provider.dart';
+import '../services/api_client.dart' hide NetworkException;
 import 'package:go_router/go_router.dart';
 import '../router.dart';
 
@@ -69,8 +70,9 @@ class AuthService {
       final token = response['token'] as String;
       final refreshToken = response['refreshToken'] as String;
 
-      // Store JWT in secure storage
+      // Store JWT in secure storage and inject into ApiClient
       await _storeAuthData(user, token, refreshToken);
+      ApiClient.setAuthToken(token);
 
       // Update auth provider state
       authProvider.setUser(user);
@@ -99,25 +101,21 @@ class AuthService {
     }
   }
 
-  /// Registers a new user with validation and OTP verification
-  /// 
-  /// [context] - BuildContext for navigation and showing snack bars
-  /// [model] - UserRegistrationModel containing registration details
-  /// 
-  /// Validates all fields, calls registration API, and triggers OTP verification.
-  /// Handles duplicate phone exceptions as form errors.
+  /// Registers a new user and immediately logs them in.
+  ///
+  /// On success the JWT is stored and the user is navigated to their dashboard.
+  /// No OTP step — the backend handles validation server-side.
   static Future<void> registerUser(
     BuildContext context,
     UserRegistrationModel model,
   ) async {
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
-    
+
     try {
-      // Set loading state
       authProvider.setLoading(true);
       authProvider.clearError();
 
-      // Validate all fields
+      // Client-side validation
       final validationError = _validateRegistrationModel(model);
       if (validationError != null) {
         authProvider.setError(validationError);
@@ -125,14 +123,22 @@ class AuthService {
         return;
       }
 
-      // Call AuthRepository
-      final user = await AuthRepository.register(model);
+      // Call backend — returns {user, token, refreshToken}
+      final response = await AuthRepository.register(model);
+      final user         = response['user'] as UserModel;
+      final token        = response['token'] as String;
+      final refreshToken = response['refreshToken'] as String;
 
-      // Trigger OTP sending
-      await _sendOTP(model.phone);
+      // Persist JWT + user meta
+      await _storeAuthData(user, token, refreshToken);
+      ApiClient.setAuthToken(token);
 
-      // Navigate to OTP verification screen
-      _navigateToOTPVerification(context, model.phone, user.id);
+      // Update provider state
+      authProvider.setUser(user);
+      authProvider.setAuthenticated(true);
+
+      // Navigate to the right dashboard
+      _navigateToDashboard(context, user.role);
 
     } on DuplicatePhoneException catch (e) {
       authProvider.setError(e.message);
@@ -204,33 +210,30 @@ class AuthService {
     }
   }
 
-  /// Gets the current authenticated user
+  /// Gets the current authenticated user by calling the backend profile endpoint.
   /// 
-  /// Returns UserModel if authenticated, null otherwise
+  /// Returns UserModel if authenticated, null otherwise.
   static Future<UserModel?> getCurrentUser() async {
     try {
-      final userId = await _secureStorage.read(key: _userIdKey);
-      final userRole = await _secureStorage.read(key: _userRoleKey);
-      
-      if (userId == null || userRole == null) return null;
-
-      // Verify token to ensure user is still authenticated
       final token = await _secureStorage.read(key: _tokenKey);
       if (token == null) return null;
 
-      await AuthRepository.verifyToken(token);
+      // Ensure the HTTP client always carries the latest JWT
+      ApiClient.setAuthToken(token);
 
-      // Return basic user info (in a real app, you might want to fetch full user data)
-      return UserModel(
-        id: userId,
-        name: '', // Would be fetched from API
-        phone: '', // Would be fetched from API
-        role: userRole,
-        createdAt: DateTime.now(),
-        updatedAt: DateTime.now(),
-      );
+      // Fetch live profile from backend
+      final response = await ApiClient.get('/api/users/profile');
+      return UserModel.fromJson(response['user']);
+    } on ApiException catch (e) {
+      // 401 → token is expired/invalid; clear local data
+      if (e.statusCode == 401) {
+        await _clearAuthData();
+        ApiClient.setAuthToken(null);
+      }
+      debugPrint('getCurrentUser API error: $e');
+      return null;
     } catch (e) {
-      await _clearAuthData();
+      debugPrint('getCurrentUser error: $e');
       return null;
     }
   }
@@ -357,11 +360,11 @@ class AuthService {
   /// Navigates to appropriate dashboard based on user role
   static void _navigateToDashboard(BuildContext context, String role) {
     if (role == 'patient') {
-      context.go('/patient-dashboard');
+      context.go('/home');
     } else if (role == 'responder') {
-      context.go('/responder-dashboard');
+      context.go('/responder');
     } else {
-      context.go('/patient-dashboard'); // Default fallback
+      context.go('/home'); // Default fallback
     }
   }
 
