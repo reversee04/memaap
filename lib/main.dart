@@ -8,6 +8,7 @@ import 'providers/emergency_provider.dart';
 import 'providers/auth_provider.dart';
 import 'router.dart';
 import 'repositories/emergency_repository.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 
 void main() async {
   // Ensure Flutter bindings are initialized
@@ -16,14 +17,23 @@ void main() async {
   // Load environment configuration
   await AppConfig.initialize();
 
+  // Initialize Hive
+  await Hive.initFlutter();
+
+  // Initialize repository
+  await EmergencyRepository.initialize();
+
   // Initialize Hive boxes used by EmergencyRepository
   await EmergencyRepository.initialize();
 
   // Initialize Google Maps Android renderer
   try {
-    final GoogleMapsFlutterPlatform mapsImplementation = GoogleMapsFlutterPlatform.instance;
+    final GoogleMapsFlutterPlatform mapsImplementation =
+        GoogleMapsFlutterPlatform.instance;
     if (mapsImplementation is GoogleMapsFlutterAndroid) {
-      await mapsImplementation.initializeWithRenderer(AndroidMapRenderer.latest);
+      await mapsImplementation.initializeWithRenderer(
+        AndroidMapRenderer.latest,
+      );
     }
   } catch (e) {
     debugPrint('Failed to initialize Google Maps Android renderer: $e');
@@ -54,9 +64,7 @@ class MyApp extends StatelessWidget {
           secondary: const Color(0xFFE53935),
           background: const Color(0xFFF5F7FA),
         ),
-        textTheme: GoogleFonts.interTextTheme(
-          Theme.of(context).textTheme,
-        ),
+        textTheme: GoogleFonts.interTextTheme(Theme.of(context).textTheme),
         useMaterial3: true,
         scaffoldBackgroundColor: const Color(0xFFF5F7FA),
       ),
