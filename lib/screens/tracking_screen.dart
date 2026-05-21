@@ -38,6 +38,10 @@ class _TrackingScreenState extends State<TrackingScreen>
 
   @override
   void initState() {
+    debugPrint('[TrackingScreen] initState called with requestId: ${widget.requestId}');
+    if (widget.requestId.isEmpty) {
+      debugPrint('[TrackingScreen] ERROR: requestId is empty!');
+    }
     super.initState();
     _startTracking();
   }
@@ -419,16 +423,19 @@ class _TrackingScreenState extends State<TrackingScreen>
     );
   }
 
-  /// Updates map markers
+  /// Updates map markers based on the latest request state.
+  ///
+  /// Shows patient pin at their emergency location and the ambulance at
+  /// the responder's real-time GPS coordinates (from SQLite polling).
   Future<void> _updateMapMarkers(EmergencyRequest request) async {
     try {
       if (_mapController == null) return;
 
-      // Clear existing markers
+      // Clear existing markers and route
       _mapController!.clearMarkers();
       _mapController!.clearRoute();
 
-      // Add patient marker (static)
+      // Patient marker — always static at the reported emergency location
       await _mapController!.addMarker(
         id: 'patient',
         position: LatLng(request.latitude, request.longitude),
@@ -437,23 +444,33 @@ class _TrackingScreenState extends State<TrackingScreen>
         infoSnippet: request.typeDisplayName,
       );
 
-      // Add responder marker (live)
+      // Responder / ambulance marker — use live GPS from database when available
       if (request.hasResponder) {
-        // In a real implementation, you'd get responder's live location
-        // For now, we'll add a marker near the patient
-        final responderLatLng = LatLng(
-          request.latitude + 0.003, // Slight offset for visibility
-          request.longitude + 0.003,
-        );
+        final LatLng responderLatLng;
+        final bool hasRealLocation =
+            request.responderLat != null && request.responderLng != null;
+
+        if (hasRealLocation) {
+          // Use the actual GPS position broadcast by the responder
+          responderLatLng = LatLng(request.responderLat!, request.responderLng!);
+        } else {
+          // Fallback: show a placeholder marker near the patient until
+          // the responder starts broadcasting their location
+          responderLatLng = LatLng(
+            request.latitude + 0.003,
+            request.longitude + 0.003,
+          );
+        }
+
         await _mapController!.addMarker(
           id: 'responder',
           position: responderLatLng,
           iconType: 'ambulance',
           infoTitle: request.responderName ?? 'Responder',
-          infoSnippet: 'En Route',
+          infoSnippet: hasRealLocation ? 'Live location' : 'Locating…',
         );
 
-        // Draw route
+        // Draw route from responder to patient
         await _mapController!.drawRoute(
           responderLatLng,
           LatLng(request.latitude, request.longitude),
@@ -463,21 +480,31 @@ class _TrackingScreenState extends State<TrackingScreen>
         );
 
         // Animate camera to fit both markers
-        double minLat = request.latitude < responderLatLng.latitude ? request.latitude : responderLatLng.latitude;
-        double maxLat = request.latitude > responderLatLng.latitude ? request.latitude : responderLatLng.latitude;
-        double minLng = request.longitude < responderLatLng.longitude ? request.longitude : responderLatLng.longitude;
-        double maxLng = request.longitude > responderLatLng.longitude ? request.longitude : responderLatLng.longitude;
+        final double minLat = request.latitude < responderLatLng.latitude
+            ? request.latitude
+            : responderLatLng.latitude;
+        final double maxLat = request.latitude > responderLatLng.latitude
+            ? request.latitude
+            : responderLatLng.latitude;
+        final double minLng = request.longitude < responderLatLng.longitude
+            ? request.longitude
+            : responderLatLng.longitude;
+        final double maxLng = request.longitude > responderLatLng.longitude
+            ? request.longitude
+            : responderLatLng.longitude;
 
-        LatLngBounds bounds = LatLngBounds(
-          southwest: LatLng(minLat, minLng),
-          northeast: LatLng(maxLat, maxLng),
-        );
-        
+        // Add a small padding so markers are not on the edge
         await _mapController!.controller?.animateCamera(
-          CameraUpdate.newLatLngBounds(bounds, 50.0),
+          CameraUpdate.newLatLngBounds(
+            LatLngBounds(
+              southwest: LatLng(minLat - 0.001, minLng - 0.001),
+              northeast: LatLng(maxLat + 0.001, maxLng + 0.001),
+            ),
+            60.0,
+          ),
         );
       } else {
-        // If no responder yet, center map on patient's coordinate
+        // No responder yet — center on patient's location
         await _mapController!.animateCameraTo(
           LatLng(request.latitude, request.longitude),
           zoom: 15.0,
@@ -485,10 +512,10 @@ class _TrackingScreenState extends State<TrackingScreen>
       }
 
       if (mounted) {
-        setState(() {}); // Trigger redraw
+        setState(() {}); // Trigger marker redraw
       }
     } catch (e) {
-      debugPrint('Failed to update map markers: $e');
+      debugPrint('Failed to update map markers: \$e');
     }
   }
 

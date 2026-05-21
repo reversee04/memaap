@@ -254,11 +254,12 @@ class _ConfirmRequestScreenState extends State<ConfirmRequestScreen> {
                 onPressed: provider.state == EmergencyState.loading
                     ? null
                     : () async {
+                        debugPrint('[ConfirmRequestScreen] Confirm button pressed');
                         // Call provider to trigger emergency
                         final success = await context.read<EmergencyProvider>().triggerEmergency(context);
-                        if (success && context.mounted) {
-                          context.go('/tracking');
-                        } else if (context.mounted) {
+                        debugPrint('[ConfirmRequestScreen] triggerEmergency returned: $success');
+                        if (!success && context.mounted) {
+                          debugPrint('[ConfirmRequestScreen] Showing error snackbar');
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(content: Text(context.read<EmergencyProvider>().errorMessage ?? 'Failed')),
                           );

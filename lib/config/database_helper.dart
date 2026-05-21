@@ -21,7 +21,7 @@ class DatabaseHelper {
   static Database? _database;
 
   /// Database version for migrations
-  static const int _databaseVersion = 1;
+  static const int _databaseVersion = 2;
 
   /// Database name
   static const String _databaseName = 'memaap.db';
@@ -50,6 +50,14 @@ class DatabaseHelper {
   static const String colRequestStatus = 'status';
   static const String colRequestCreatedAt = 'created_at';
   static const String colRequestUpdatedAt = 'updated_at';
+  static const String colRequestAddress = 'address';
+  static const String colRequestResponderId = 'responder_id';
+  static const String colRequestResponderName = 'responder_name';
+  static const String colRequestEstimatedArrival = 'estimated_arrival_minutes';
+  static const String colRequestIsOfflineQueued = 'is_offline_queued';
+  static const String colRequestSyncedAt = 'synced_at';
+  static const String colRequestResponderLat = 'responder_lat';
+  static const String colRequestResponderLng = 'responder_lng';
 
   /// Column names for cached_hospitals table
   static const String colHospitalId = 'id';
@@ -123,8 +131,8 @@ class DatabaseHelper {
       // Create emergency_requests table
       await db.execute('''
         CREATE TABLE $tableEmergencyRequests (
-          $colRequestId INTEGER PRIMARY KEY AUTOINCREMENT,
-          $colRequestUserId INTEGER NOT NULL,
+          $colRequestId TEXT PRIMARY KEY,
+          $colRequestUserId TEXT NOT NULL,
           $colRequestType TEXT NOT NULL,
           $colRequestDescription TEXT,
           $colRequestLatitude REAL NOT NULL,
@@ -132,7 +140,14 @@ class DatabaseHelper {
           $colRequestStatus TEXT NOT NULL DEFAULT 'pending',
           $colRequestCreatedAt TEXT NOT NULL,
           $colRequestUpdatedAt TEXT NOT NULL,
-          FOREIGN KEY ($colRequestUserId) REFERENCES $tableUsers ($colUserId) ON DELETE CASCADE
+          $colRequestAddress TEXT,
+          $colRequestResponderId TEXT,
+          $colRequestResponderName TEXT,
+          $colRequestEstimatedArrival INTEGER,
+          $colRequestIsOfflineQueued INTEGER NOT NULL DEFAULT 0,
+          $colRequestSyncedAt TEXT,
+          $colRequestResponderLat REAL,
+          $colRequestResponderLng REAL
         )
       ''');
 
@@ -168,10 +183,27 @@ class DatabaseHelper {
   /// [newVersion] - The target database version
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
     try {
-      // Add migration logic here when database version changes
-      // Example: if (oldVersion < 2) { await db.execute('ALTER TABLE ...'); }
-      
-      // For now, since we're at version 1, no migrations are needed
+      if (oldVersion < 2) {
+        // Migrate from v1 → v2: add tracking columns to emergency_requests
+        // Attempt to alter; ignore if column already exists (safe migration)
+        final alterStatements = [
+          'ALTER TABLE $tableEmergencyRequests ADD COLUMN $colRequestAddress TEXT',
+          'ALTER TABLE $tableEmergencyRequests ADD COLUMN $colRequestResponderId TEXT',
+          'ALTER TABLE $tableEmergencyRequests ADD COLUMN $colRequestResponderName TEXT',
+          'ALTER TABLE $tableEmergencyRequests ADD COLUMN $colRequestEstimatedArrival INTEGER',
+          'ALTER TABLE $tableEmergencyRequests ADD COLUMN $colRequestIsOfflineQueued INTEGER NOT NULL DEFAULT 0',
+          'ALTER TABLE $tableEmergencyRequests ADD COLUMN $colRequestSyncedAt TEXT',
+          'ALTER TABLE $tableEmergencyRequests ADD COLUMN $colRequestResponderLat REAL',
+          'ALTER TABLE $tableEmergencyRequests ADD COLUMN $colRequestResponderLng REAL',
+        ];
+        for (final sql in alterStatements) {
+          try {
+            await db.execute(sql);
+          } catch (_) {
+            // Column may already exist — safe to ignore
+          }
+        }
+      }
     } catch (e) {
       throw Exception('Failed to migrate database from version $oldVersion to $newVersion: $e');
     }

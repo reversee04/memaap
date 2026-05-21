@@ -161,7 +161,7 @@ class PatientTrackingService {
       _locationSubscription = Geolocator.getPositionStream(
         locationSettings: const LocationSettings(
           accuracy: LocationAccuracy.high,
-          distanceFilter: 5.0, // Update every 5 meters
+          distanceFilter: 5, // Update every 5 meters
         ),
       ).listen(
         (position) {
@@ -188,7 +188,7 @@ class PatientTrackingService {
       _lastUpdateTime = DateTime.now();
 
       // Update patient marker
-      await mapController.updateMarkerPosition(
+      mapController.updateMarkerPosition(
         'patient_${_getRequestIdFromMap(mapController)}',
         LatLng(position.latitude, position.longitude),
       );
@@ -337,7 +337,7 @@ class PatientTrackingService {
                 children: [
                   const Icon(Icons.warning, color: Colors.orange, size: 16),
                   const SizedBox(width: 8),
-                  const Text(
+                  Text(
                     'Location data may be outdated',
                     style: TextStyle(
                       color: Colors.orange[800],

@@ -22,6 +22,7 @@ class EmergencyProvider extends ChangeNotifier {
   }
 
   Future<bool> triggerEmergency(BuildContext context) async {
+    debugPrint('[EmergencyProvider] triggerEmergency called with type: $_selectedEmergencyType');
     _setState(EmergencyState.loading);
 
     // Parse type
@@ -29,16 +30,20 @@ class EmergencyProvider extends ChangeNotifier {
     if (_selectedEmergencyType.toLowerCase().contains('maternal')) {
       type = EmergencyType.medical;
     }
+    debugPrint('[EmergencyProvider] Parsed type: $type');
 
     // Call the service to handle location, network, API, and SMS fallback
     final success = await EmergencyService.sendEmergencyAlert(context, type);
+    debugPrint('[EmergencyProvider] sendEmergencyAlert returned: $success');
 
     if (success) {
       _setState(EmergencyState.success);
+      debugPrint('[EmergencyProvider] Emergency triggered successfully');
       return true;
     } else {
       _errorMessage = 'Failed to send emergency request. Please try again or call directly.';
       _setState(EmergencyState.error);
+      debugPrint('[EmergencyProvider] Emergency trigger failed: $_errorMessage');
       return false;
     }
   }

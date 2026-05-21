@@ -7,13 +7,19 @@ import 'config/app_config.dart';
 import 'providers/emergency_provider.dart';
 import 'providers/auth_provider.dart';
 import 'router.dart';
+import 'repositories/emergency_repository.dart';
 
 void main() async {
-  // Initialize AppConfig before runApp()
+  // Ensure Flutter bindings are initialized
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Load environment configuration
   await AppConfig.initialize();
 
-  // Initialize Google Maps Android Renderer to prevent dynamite core renderer crashes
+  // Initialize Hive boxes used by EmergencyRepository
+  await EmergencyRepository.initialize();
+
+  // Initialize Google Maps Android renderer
   try {
     final GoogleMapsFlutterPlatform mapsImplementation = GoogleMapsFlutterPlatform.instance;
     if (mapsImplementation is GoogleMapsFlutterAndroid) {
@@ -22,7 +28,7 @@ void main() async {
   } catch (e) {
     debugPrint('Failed to initialize Google Maps Android renderer: $e');
   }
-  
+
   runApp(
     MultiProvider(
       providers: [

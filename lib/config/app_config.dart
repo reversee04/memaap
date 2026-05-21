@@ -9,8 +9,16 @@ class AppConfig {
   // Private constructor to prevent instantiation
   AppConfig._();
 
-  /// Base URL for all API endpoints
-  static String get baseUrl => dotenv.env['BASE_API_URL'] ?? 'https://api.memaap.com';
+  static String get baseUrl {
+    final url = dotenv.env['BASE_API_URL'] ?? 'http://localhost:3000/api';
+    if (url.endsWith('/api')) {
+      return url;
+    }
+    if (url.endsWith('/')) {
+      return '${url}api';
+    }
+    return '$url/api';
+  }
   
   /// Google Maps API key for mapping services
   static String get googleMapsKey => dotenv.env['GOOGLE_MAPS_KEY'] ?? '';

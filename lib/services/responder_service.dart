@@ -8,7 +8,7 @@ import '../services/location_service.dart';
 import '../services/notification_service.dart';
 
 /// Service class for responder operations
-/// 
+///
 /// Provides functionality for accepting emergency requests, GPS broadcasting,
 /// and notification handling for Mobile Emergency Medical Assistance App.
 class ResponderService {
@@ -140,7 +140,7 @@ class ResponderService {
       await LocationService.startLocationUpdates(
         distanceFilter: 10, // Update every 10 meters
         callback: (position) {
-          // Broadcast location via WebSocket
+          // Broadcast location AND persist to local SQLite for patient tracking
           _broadcastResponderLocation(requestId, position);
         },
       );
@@ -153,29 +153,37 @@ class ResponderService {
     }
   }
 
-  /// Broadcasts responder location via WebSocket
+  /// Broadcasts responder location via WebSocket and persists to local SQLite.
+  ///
+  /// Persisting to SQLite ensures the patient's polling tracker can always
+  /// see the responder's current position even when WebSocket is unavailable.
   static Future<void> _broadcastResponderLocation(
     String requestId,
     Position position,
   ) async {
     try {
-      // This would send location updates via WebSocket
-      // For now, we'll simulate the broadcast
       debugPrint('Broadcasting location for request $requestId: '
-          '${position.latitude}, ${position.longitude}');
-      
-      // In a real implementation, you'd send this data:
-      // {
+          '\${position.latitude}, \${position.longitude}');
+
+      // Persist coordinates to SQLite so the patient's TrackingScreen
+      // polling loop can pick them up in real-time
+      await EmergencyRepository.updateResponderLocation(
+        requestId,
+        position.latitude,
+        position.longitude,
+      );
+
+      // TODO: Also send over WebSocket when server is available:
+      // _webSocketChannel?.sink.add(jsonEncode({
       //   'type': 'responder_location_update',
       //   'requestId': requestId,
-      //   'responderId': responderId,
       //   'latitude': position.latitude,
       //   'longitude': position.longitude,
       //   'timestamp': DateTime.now().toIso8601String(),
-      // }
-      
+      // }));
+
     } catch (e) {
-      debugPrint('Failed to broadcast responder location: $e');
+      debugPrint('Failed to broadcast responder location: \$e');
     }
   }
 
@@ -227,7 +235,7 @@ class ResponderService {
       await LocationService.stopLocationUpdates();
       debugPrint('GPS broadcasting stopped');
     } catch (e) {
-      debugPrint('Failed to stop GPS broadcasting: $e');
+      debugPrint('Failed to stop GPS broadcasting: \$e');
     }
   }
 

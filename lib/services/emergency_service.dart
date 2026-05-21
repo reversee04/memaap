@@ -30,9 +30,12 @@ class EmergencyService {
     EmergencyType type, {
     String? description,
   }) async {
+    debugPrint('[EmergencyService] sendEmergencyAlert called with type: $type');
     try {
       // Step 1: Show confirmation bottom sheet
+      debugPrint('[EmergencyService] Showing confirmation dialog');
       final confirmed = await _showEmergencyConfirmation(context, type);
+      debugPrint('[EmergencyService] User confirmed: $confirmed');
       if (!confirmed) return false;
 
       // Show loading indicator
@@ -40,7 +43,9 @@ class EmergencyService {
 
       try {
         // Step 2: Get GPS location
+        debugPrint('[EmergencyService] Getting GPS location');
         final position = await LocationService.getCurrentLocation();
+        debugPrint('[EmergencyService] Location obtained: ${position.latitude}, ${position.longitude}');
         
         // Step 3: Reverse geocode coordinates
         String? address;
@@ -55,12 +60,14 @@ class EmergencyService {
             address = '${place.street}, ${place.locality}, ${place.country}';
           }
         } catch (e) {
-          debugPrint('Geocoding failed: $e');
+          debugPrint('[EmergencyService] Geocoding failed: $e');
           // Continue without address
         }
 
         // Step 4: Build emergency request
+        debugPrint('[EmergencyService] Building emergency request');
         final user = await _getCurrentUser();
+        debugPrint('[EmergencyService] User: ${user?.id}, ${user?.name}');
         final emergencyRequest = EmergencyRequest(
           id: '', // Will be set by API
           userId: user?.id ?? 'unknown',
@@ -78,21 +85,26 @@ class EmergencyService {
         _updateLoadingDialog(context, 'Sending emergency alert...');
 
         // Step 5: Create request via repository
+        debugPrint('[EmergencyService] Creating request via repository');
         final createdRequest = await EmergencyRepository.createRequest(emergencyRequest);
+        debugPrint('[EmergencyService] Request created with ID: ${createdRequest.id}');
+        debugPrint('[EmergencyService] Request status: ${createdRequest.status}');
 
         // Close loading dialog
-        Navigator.of(context, rootNavigator: true).pop();
+        _dismissLoadingDialog(context);
 
         // Step 6: Show success and navigate
         _showSuccessSnackBar(context, 'Emergency alert sent successfully!');
         
         // Navigate to tracking screen
+        debugPrint('[EmergencyService] Navigating to tracking screen with requestId: ${createdRequest.id}');
         _navigateToTrackingScreen(context, createdRequest);
         
         return true;
 
       } on LocationException catch (e) {
-        Navigator.of(context, rootNavigator: true).pop();
+        debugPrint('[EmergencyService] LocationException: ${e.type} - ${e.message}');
+        _dismissLoadingDialog(context);
         
         if (e.type == LocationExceptionType.permissionDenied ||
             e.type == LocationExceptionType.permissionPermanentlyDenied) {
@@ -104,15 +116,16 @@ class EmergencyService {
           return false;
         }
       } catch (e) {
-        Navigator.of(context, rootNavigator: true).pop();
+        debugPrint('[EmergencyService] API failed, falling back to SMS: $e');
+        _dismissLoadingDialog(context);
         
         // Step 6: Fallback to SMS if offline
-        debugPrint('API failed, falling back to SMS: $e');
         return await _fallbackToSMS(context, type, description);
       }
 
     } catch (e) {
-      Navigator.of(context, rootNavigator: true).pop();
+      debugPrint('[EmergencyService] General error: $e');
+      _dismissLoadingDialog(context);
       _showErrorSnackBar(context, 'Failed to send emergency alert');
       return false;
     }
@@ -229,8 +242,12 @@ class EmergencyService {
     ) ?? false;
   }
 
+  static bool _isLoadingDialogShowing = false;
+
   /// Shows loading dialog
   static void _showLoadingDialog(BuildContext context, String message) {
+    if (_isLoadingDialogShowing) return;
+    _isLoadingDialogShowing = true;
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -243,16 +260,21 @@ class EmergencyService {
           ],
         ),
       ),
-    );
+    ).then((_) => _isLoadingDialogShowing = false);
+  }
+
+  /// Closes loading dialog safely
+  static void _dismissLoadingDialog(BuildContext context) {
+    if (_isLoadingDialogShowing) {
+      _isLoadingDialogShowing = false;
+      Navigator.of(context, rootNavigator: true).pop();
+    }
   }
 
   /// Updates loading dialog message
   static void _updateLoadingDialog(BuildContext context, String message) {
-    final dialog = context.findAncestorWidgetOfExactType<AlertDialog>();
-    if (dialog != null) {
-      Navigator.of(context, rootNavigator: true).pop();
-      _showLoadingDialog(context, message);
-    }
+    _dismissLoadingDialog(context);
+    _showLoadingDialog(context, message);
   }
 
   /// Shows success snack bar
@@ -319,7 +341,7 @@ class EmergencyService {
       // Get user info
       final user = await _getCurrentUser();
       if (user == null) {
-        Navigator.of(context, rootNavigator: true).pop();
+        _dismissLoadingDialog(context);
         _showErrorSnackBar(context, 'User information not available');
         return false;
       }
@@ -327,7 +349,7 @@ class EmergencyService {
       // Get last known location
       final position = await LocationService.getCachedLocation();
       if (position == null) {
-        Navigator.of(context, rootNavigator: true).pop();
+        _dismissLoadingDialog(context);
         _showErrorSnackBar(context, 'Location information not available');
         return false;
       }
@@ -341,7 +363,7 @@ class EmergencyService {
         user.phone,
       );
 
-      Navigator.of(context, rootNavigator: true).pop();
+      _dismissLoadingDialog(context);
 
       if (success) {
         _showSuccessSnackBar(context, 'Emergency alert sent via SMS successfully!');
@@ -371,7 +393,7 @@ class EmergencyService {
       }
 
     } catch (e) {
-      Navigator.of(context, rootNavigator: true).pop();
+      _dismissLoadingDialog(context);
       _showErrorSnackBar(context, 'SMS fallback failed');
       return false;
     }
@@ -392,12 +414,12 @@ class EmergencyService {
 
       await EmergencyRepository.cancelRequest(requestId);
 
-      Navigator.of(context, rootNavigator: true).pop();
+      _dismissLoadingDialog(context);
       _showSuccessSnackBar(context, 'Emergency request cancelled');
       
       return true;
     } catch (e) {
-      Navigator.of(context, rootNavigator: true).pop();
+      _dismissLoadingDialog(context);
       _showErrorSnackBar(context, 'Failed to cancel emergency request');
       return false;
     }

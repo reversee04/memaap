@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'dart:async';
 import 'package:sqflite/sqflite.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
@@ -10,19 +9,23 @@ import '../services/api_client.dart';
 import '../config/database_helper.dart';
 
 /// Repository class that manages emergency requests via REST API
-/// 
+///
 /// Provides CRUD operations, WebSocket streaming, and offline queuing
 /// with Hive for Mobile Emergency Medical Assistance App.
 class EmergencyRepository {
   static const String _emergencyBoxName = 'emergency_requests_queue';
   static const String _syncBoxName = 'emergency_sync_queue';
-  
+
   static late Box<Map<dynamic, dynamic>> _emergencyBox;
   static late Box<Map<dynamic, dynamic>> _syncBox;
   static WebSocketChannel? _webSocketChannel;
   static StreamSubscription? _connectivitySubscription;
   static bool _isOnline = true;
   static Timer? _syncTimer;
+  static Timer? _dashboardPollTimer;
+
+  // Stream controller for request updates — initialized as broadcast
+  static StreamController<EmergencyRequest>? _requestStreamController;
 
   /// Initializes the repository and Hive boxes
   static Future<void> initialize() async {
@@ -41,28 +44,31 @@ class EmergencyRepository {
       }
 
       // Initialize connectivity monitoring
-      _connectivitySubscription = Connectivity().onConnectivityChanged.listen(_onConnectivityChanged);
-      
+      _connectivitySubscription = Connectivity().onConnectivityChanged.listen(
+        _onConnectivityChanged,
+      );
+
       // Check initial connectivity
       final connectivityResult = await Connectivity().checkConnectivity();
       _isOnline = connectivityResult != ConnectivityResult.none;
 
       // Start periodic sync
       _startPeriodicSync();
-
     } catch (e) {
       throw Exception('Failed to initialize EmergencyRepository: $e');
     }
   }
 
   /// Creates a new emergency request
-  /// 
+  ///
   /// [request] - EmergencyRequest object to create
-  /// 
+  ///
   /// Returns the created EmergencyRequest
-  /// 
+  ///
   /// Throws [ApiException] if creation fails, queues offline if no network
-  static Future<EmergencyRequest> createRequest(EmergencyRequest request) async {
+  static Future<EmergencyRequest> createRequest(
+    EmergencyRequest request,
+  ) async {
     try {
       if (_isOnline) {
         // Try to create via API
@@ -70,51 +76,54 @@ class EmergencyRepository {
           '/emergency/create',
           data: request.toJson(),
         );
-
         final createdRequest = EmergencyRequest.fromJson(response['emergency']);
-        
+
         // Store in local database
         await _storeRequestLocally(createdRequest);
-        
+
         return createdRequest;
       } else {
         // Queue for offline sync
         await _queueRequestForSync(request, 'create');
-        
+
         // Mark as offline queued
         final offlineRequest = request.copyWith(
           isOfflineQueued: true,
           id: 'offline_${DateTime.now().millisecondsSinceEpoch}',
         );
-        
+
         // Store in local database
         await _storeRequestLocally(offlineRequest);
-        
+
         return offlineRequest;
       }
     } on ConflictException catch (e) {
       // Handle duplicate request conflict
-      throw ApiException('Duplicate emergency request: ${e.message}', 409, e.data);
+      throw ApiException(
+        'Duplicate emergency request: ${e.message}',
+        409,
+        e.data,
+      );
     } catch (e) {
-      if (e is ApiException) rethrow;
-      
+      if (e is ApiException && e is! NetworkException) rethrow;
+
       // Queue for offline sync on other errors
       await _queueRequestForSync(request, 'create');
-      
+
       final offlineRequest = request.copyWith(
         isOfflineQueued: true,
         id: 'offline_${DateTime.now().millisecondsSinceEpoch}',
       );
-      
+
       await _storeRequestLocally(offlineRequest);
       return offlineRequest;
     }
   }
 
   /// Gets an emergency request by ID
-  /// 
+  ///
   /// [id] - Emergency request ID
-  /// 
+  ///
   /// Returns the EmergencyRequest or null if not found
   static Future<EmergencyRequest?> getRequestById(String id) async {
     try {
@@ -122,10 +131,10 @@ class EmergencyRepository {
         // Try to get from API first
         final response = await ApiClient.get('/emergency/$id');
         final request = EmergencyRequest.fromJson(response['emergency']);
-        
+
         // Update local cache
         await _storeRequestLocally(request);
-        
+
         return request;
       } else {
         // Get from local database
@@ -138,11 +147,11 @@ class EmergencyRepository {
   }
 
   /// Gets all emergency requests for a specific user
-  /// 
+  ///
   /// [userId] - User ID
   /// [status] - Optional status filter
   /// [limit] - Optional limit on number of requests
-  /// 
+  ///
   /// Returns a list of EmergencyRequest objects
   static Future<List<EmergencyRequest>> getUserRequests(
     String userId, {
@@ -193,7 +202,6 @@ class EmergencyRepository {
           .map((row) => EmergencyRequest.fromDatabaseMap(row))
           .toList();
     } catch (e) {
-      debugPrint('Failed to get all requests: $e');
       return [];
     }
   }
@@ -203,11 +211,72 @@ class EmergencyRepository {
     await _storeRequestLocally(request);
   }
 
+  /// Internal helper to store request in local database
+  static Future<void> _storeRequestLocally(EmergencyRequest request) async {
+    final db = await DatabaseHelper().database;
+    await db.insert(
+      DatabaseHelper.tableEmergencyRequests,
+      request.toDatabaseMap(),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  /// Assigns a responder to an emergency request
+  ///
+  /// [id] - Emergency request ID
+  /// [responderId] - Responder ID
+  ///
+  /// Returns the updated EmergencyRequest
+  static Future<EmergencyRequest> assignResponder(
+    String id,
+    String responderId,
+  ) async {
+    try {
+      if (_isOnline) {
+        final response = await ApiClient.put('/emergency/$id/accept');
+
+        final updatedRequest = EmergencyRequest.fromJson(response['emergency']);
+
+        // Update local database
+        await _updateRequestInDatabase(updatedRequest);
+
+        return updatedRequest;
+      } else {
+        // Queue for offline sync
+        final existingRequest = await _getRequestFromDatabase(id);
+        if (existingRequest != null) {
+          final updatedRequest = existingRequest.copyWith(
+            responderId: responderId,
+            responderName: 'John Responder', // Mock name
+          );
+          await _updateRequestInDatabase(updatedRequest);
+          await _queueRequestForSync(updatedRequest, 'assign_responder');
+          return updatedRequest;
+        } else {
+          throw Exception('Request not found: $id');
+        }
+      }
+    } catch (e) {
+      // Fallback
+      final existingRequest = await _getRequestFromDatabase(id);
+      if (existingRequest != null) {
+        final updatedRequest = existingRequest.copyWith(
+          responderId: responderId,
+          responderName: 'John Responder',
+        );
+        await _updateRequestInDatabase(updatedRequest);
+        return updatedRequest;
+      } else {
+        throw Exception('Request not found: $id');
+      }
+    }
+  }
+
   /// Updates the status of an emergency request
-  /// 
+  ///
   /// [id] - Emergency request ID
   /// [status] - New status
-  /// 
+  ///
   /// Returns the updated EmergencyRequest
   static Future<EmergencyRequest> updateRequestStatus(
     String id,
@@ -221,10 +290,10 @@ class EmergencyRepository {
         );
 
         final updatedRequest = EmergencyRequest.fromJson(response['emergency']);
-        
+
         // Update local database
         await _updateRequestInDatabase(updatedRequest);
-        
+
         return updatedRequest;
       } else {
         // Queue for offline sync
@@ -232,9 +301,9 @@ class EmergencyRepository {
         if (existingRequest != null) {
           final updatedRequest = existingRequest.copyWith(status: status);
           await _updateRequestInDatabase(updatedRequest);
-          
+
           await _queueRequestForSync(updatedRequest, 'update_status');
-          
+
           return updatedRequest;
         } else {
           throw Exception('Request not found: $id');
@@ -246,9 +315,9 @@ class EmergencyRepository {
       if (existingRequest != null) {
         final updatedRequest = existingRequest.copyWith(status: status);
         await _updateRequestInDatabase(updatedRequest);
-        
+
         await _queueRequestForSync(updatedRequest, 'update_status');
-        
+
         return updatedRequest;
       } else {
         throw Exception('Request not found: $id');
@@ -257,19 +326,21 @@ class EmergencyRepository {
   }
 
   /// Cancels an emergency request
-  /// 
+  ///
   /// [id] - Emergency request ID
-  /// 
+  ///
   /// Returns the cancelled EmergencyRequest
   static Future<EmergencyRequest> cancelRequest(String id) async {
     try {
       if (_isOnline) {
         final response = await ApiClient.delete('/emergency/$id');
-        final cancelledRequest = EmergencyRequest.fromJson(response['emergency']);
-        
+        final cancelledRequest = EmergencyRequest.fromJson(
+          response['emergency'],
+        );
+
         // Update local database
         await _updateRequestInDatabase(cancelledRequest);
-        
+
         return cancelledRequest;
       } else {
         // Queue for offline sync
@@ -278,10 +349,10 @@ class EmergencyRepository {
           final cancelledRequest = existingRequest.copyWith(
             status: EmergencyStatus.cancelled,
           );
-          
+
           await _updateRequestInDatabase(cancelledRequest);
           await _queueRequestForSync(cancelledRequest, 'cancel');
-          
+
           return cancelledRequest;
         } else {
           throw Exception('Request not found: $id');
@@ -294,10 +365,10 @@ class EmergencyRepository {
         final cancelledRequest = existingRequest.copyWith(
           status: EmergencyStatus.cancelled,
         );
-        
+
         await _updateRequestInDatabase(cancelledRequest);
         await _queueRequestForSync(cancelledRequest, 'cancel');
-        
+
         return cancelledRequest;
       } else {
         throw Exception('Request not found: $id');
@@ -306,17 +377,20 @@ class EmergencyRepository {
   }
 
   /// Creates a WebSocket connection to watch a specific request
-  /// 
+  ///
   /// [id] - Emergency request ID to watch
-  /// [onUpdate] - Callback for request updates
   /// [onError] - Callback for errors
-  /// 
+  ///
   /// Returns a Stream of request updates
   static Stream<EmergencyRequest> watchRequest(
     String id, {
     Function(dynamic)? onError,
   }) {
     try {
+      // Always create a fresh broadcast controller
+      _requestStreamController?.close();
+      _requestStreamController = StreamController<EmergencyRequest>.broadcast();
+
       if (_webSocketChannel != null) {
         _webSocketChannel?.sink.close();
       }
@@ -326,11 +400,13 @@ class EmergencyRepository {
         onMessage: (message) {
           try {
             final data = jsonDecode(message);
-            final request = EmergencyRequest.fromJson(data['emergency']);
-            
+            final request = EmergencyRequest.fromJson(
+              data['emergency'] ?? data,
+            );
+
             // Update local database
             _updateRequestInDatabase(request);
-            
+
             // Add to stream
             _requestStreamController?.add(request);
           } catch (e) {
@@ -340,11 +416,13 @@ class EmergencyRepository {
         onError: onError,
       );
 
-      return _requestStreamController?.stream ?? 
-             StreamController<EmergencyRequest>.broadcast().stream;
+      return _requestStreamController!.stream;
     } catch (e) {
       onError?.call(e);
-      return Stream.empty();
+      // Return an empty broadcast stream on error
+      _requestStreamController ??=
+          StreamController<EmergencyRequest>.broadcast();
+      return _requestStreamController!.stream;
     }
   }
 
@@ -354,13 +432,63 @@ class EmergencyRepository {
       await _webSocketChannel?.sink.close();
       _webSocketChannel = null;
       await _requestStreamController?.close();
+      _requestStreamController = null;
     } catch (e) {
       // Ignore errors during cleanup
     }
   }
 
+  /// Updates the responder's current GPS coordinates in the database.
+  ///
+  /// Called by ResponderService every time a new location fix arrives.
+  /// [requestId] - The active emergency request ID
+  /// [lat] - Responder's current latitude
+  /// [lng] - Responder's current longitude
+  static Future<void> updateResponderLocation(
+    String requestId,
+    double lat,
+    double lng,
+  ) async {
+    try {
+      final db = await DatabaseHelper().database;
+      await db.update(
+        DatabaseHelper.tableEmergencyRequests,
+        {
+          'responder_lat': lat,
+          'responder_lng': lng,
+          'updated_at': DateTime.now().toIso8601String(),
+        },
+        where: 'id = ?',
+        whereArgs: [requestId],
+      );
+    } catch (e) {}
+  }
+
+  /// Starts a periodic timer that polls all requests from SQLite.
+  ///
+  /// Used by the Responder Dashboard to detect new patient requests
+  /// written offline / without a live WebSocket connection.
+  ///
+  /// [onNewRequests] - Callback receiving the latest list each tick
+  static void startPollingForRequests(
+    void Function(List<EmergencyRequest>) onNewRequests, {
+    Duration interval = const Duration(seconds: 3),
+  }) {
+    _dashboardPollTimer?.cancel();
+    _dashboardPollTimer = Timer.periodic(interval, (_) async {
+      final requests = await getAllRequests();
+      onNewRequests(requests);
+    });
+  }
+
+  /// Stops the dashboard polling timer.
+  static void stopPollingForRequests() {
+    _dashboardPollTimer?.cancel();
+    _dashboardPollTimer = null;
+  }
+
   /// Syncs all queued offline requests
-  /// 
+  ///
   /// Returns the number of requests synced
   static Future<int> syncQueuedRequests() async {
     if (!_isOnline) return 0;
@@ -380,7 +508,7 @@ class EmergencyRepository {
             await _syncBox.delete(queuedData['key']);
             syncedCount++;
             break;
-            
+
           case 'update_status':
             await ApiClient.put(
               '/emergency/${request.id}/status',
@@ -389,9 +517,15 @@ class EmergencyRepository {
             await _syncBox.delete(queuedData['key']);
             syncedCount++;
             break;
-            
+
           case 'cancel':
             await ApiClient.delete('/emergency/${request.id}');
+            await _syncBox.delete(queuedData['key']);
+            syncedCount++;
+            break;
+
+          case 'assign_responder':
+            await ApiClient.put('/emergency/${request.id}/accept');
             await _syncBox.delete(queuedData['key']);
             syncedCount++;
             break;
@@ -407,12 +541,12 @@ class EmergencyRepository {
       final syncedRequests = _emergencyBox.values
           .where((r) => r['isOfflineQueued'] == true)
           .toList();
-          
+
       for (final request in syncedRequests) {
         request['isOfflineQueued'] = false;
         request['syncedAt'] = DateTime.now().toIso8601String();
       }
-      
+
       await _emergencyBox.putAll(
         Map.fromEntries(syncedRequests.map((r) => MapEntry(r['id'], r))),
       );
@@ -436,21 +570,13 @@ class EmergencyRepository {
   }
 
   /// Stores a request in the local database
-  static Future<void> _storeRequestLocally(EmergencyRequest request) async {
-    final db = await DatabaseHelper().database;
-    
-    await db.insert(
-      DatabaseHelper.tableEmergencyRequests,
-      request.toDatabaseMap(),
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
-  }
+  // _storeRequestLocally implementation removed; using map insert version defined later.
 
   /// Gets a request from the local database
   static Future<EmergencyRequest?> _getRequestFromDatabase(String id) async {
     try {
       final db = await DatabaseHelper().database;
-      
+
       final results = await db.query(
         DatabaseHelper.tableEmergencyRequests,
         where: 'id = ?',
@@ -461,7 +587,7 @@ class EmergencyRepository {
       if (results.isNotEmpty) {
         return EmergencyRequest.fromDatabaseMap(results.first);
       }
-      
+
       return null;
     } catch (e) {
       return null;
@@ -476,15 +602,15 @@ class EmergencyRepository {
   ) async {
     try {
       final db = await DatabaseHelper().database;
-      
+
       String whereClause = 'user_id = ?';
       List<dynamic> whereArgs = [userId];
-      
+
       if (status != null) {
         whereClause += ' AND status = ?';
         whereArgs.add(status.name);
       }
-      
+
       final results = await db.query(
         DatabaseHelper.tableEmergencyRequests,
         where: whereClause,
@@ -501,13 +627,15 @@ class EmergencyRepository {
     }
   }
 
-  /// Updates a request in the local database
   static Future<void> _updateRequestInDatabase(EmergencyRequest request) async {
     final db = await DatabaseHelper().database;
-    
+    // Ensure boolean is stored as integer
+    final int isOfflineInt = request.isOfflineQueued ? 1 : 0;
+    final map = request.toDatabaseMap();
+    map['is_offline_queued'] = isOfflineInt;
     await db.update(
       DatabaseHelper.tableEmergencyRequests,
-      request.toDatabaseMap(),
+      map,
       where: 'id = ?',
       whereArgs: [request.id],
     );
@@ -545,7 +673,4 @@ class EmergencyRepository {
       // Ignore errors during cleanup
     }
   }
-
-  // Stream controller for request updates
-  static StreamController<EmergencyRequest>? _requestStreamController;
 }

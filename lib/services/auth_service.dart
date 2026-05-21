@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -22,6 +23,7 @@ class AuthService {
   static const String _refreshTokenKey = 'refresh_token';
   static const String _userIdKey = 'user_id';
   static const String _userRoleKey = 'user_role';
+  static const String _userCacheKey = 'user_cache';
 
   /// Logs in a user with phone and password
   /// 
@@ -216,14 +218,24 @@ class AuthService {
   static Future<UserModel?> getCurrentUser() async {
     try {
       final token = await _secureStorage.read(key: _tokenKey);
-      if (token == null) return null;
+      if (token == null) {
+        // Try to load cached user data
+        final cached = await _secureStorage.read(key: _userCacheKey);
+        if (cached != null) {
+          return UserModel.fromJson(jsonDecode(cached));
+        }
+        return null;
+      }
 
       // Ensure the HTTP client always carries the latest JWT
       ApiClient.setAuthToken(token);
 
       // Fetch live profile from backend
       final response = await ApiClient.get('/api/users/profile');
-      return UserModel.fromJson(response['user']);
+      final user = UserModel.fromJson(response['user']);
+      // Update cache with fresh data
+      await _secureStorage.write(key: _userCacheKey, value: jsonEncode(user.toJson()));
+      return user;
     } on ApiException catch (e) {
       // 401 → token is expired/invalid; clear local data
       if (e.statusCode == 401) {
@@ -231,9 +243,18 @@ class AuthService {
         ApiClient.setAuthToken(null);
       }
       debugPrint('getCurrentUser API error: $e');
+      // Attempt to return cached user if available
+      final cached = await _secureStorage.read(key: _userCacheKey);
+      if (cached != null) {
+        return UserModel.fromJson(jsonDecode(cached));
+      }
       return null;
     } catch (e) {
       debugPrint('getCurrentUser error: $e');
+      final cached = await _secureStorage.read(key: _userCacheKey);
+      if (cached != null) {
+        return UserModel.fromJson(jsonDecode(cached));
+      }
       return null;
     }
   }
@@ -277,6 +298,8 @@ class AuthService {
     // Store role in SharedPreferences for easy access
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('user_role', user.role);
+    // Store entire user JSON for offline access
+    await _secureStorage.write(key: _userCacheKey, value: jsonEncode(user.toJson()));
   }
 
   /// Clears all authentication data

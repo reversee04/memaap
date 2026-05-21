@@ -57,6 +57,9 @@ class EmergencyRequest {
   final int? estimatedArrivalMinutes;
   final bool isOfflineQueued;
   final DateTime? syncedAt;
+  /// Live responder GPS coordinates — updated by ResponderService as they move
+  final double? responderLat;
+  final double? responderLng;
 
   EmergencyRequest({
     required this.id,
@@ -74,6 +77,8 @@ class EmergencyRequest {
     this.estimatedArrivalMinutes,
     this.isOfflineQueued = false,
     this.syncedAt,
+    this.responderLat,
+    this.responderLng,
   });
 
   /// Creates a copy of this model with updated values
@@ -93,6 +98,8 @@ class EmergencyRequest {
     int? estimatedArrivalMinutes,
     bool? isOfflineQueued,
     DateTime? syncedAt,
+    double? responderLat,
+    double? responderLng,
   }) {
     return EmergencyRequest(
       id: id ?? this.id,
@@ -110,6 +117,8 @@ class EmergencyRequest {
       estimatedArrivalMinutes: estimatedArrivalMinutes ?? this.estimatedArrivalMinutes,
       isOfflineQueued: isOfflineQueued ?? this.isOfflineQueued,
       syncedAt: syncedAt ?? this.syncedAt,
+      responderLat: responderLat ?? this.responderLat,
+      responderLng: responderLng ?? this.responderLng,
     );
   }
 
@@ -133,6 +142,8 @@ class EmergencyRequest {
       syncedAt: json['syncedAt'] != null 
           ? DateTime.tryParse(json['syncedAt']) 
           : null,
+      responderLat: (json['responderLat'] ?? json['responder_lat'])?.toDouble(),
+      responderLng: (json['responderLng'] ?? json['responder_lng'])?.toDouble(),
     );
   }
 
@@ -154,6 +165,8 @@ class EmergencyRequest {
       if (estimatedArrivalMinutes != null) 'estimatedArrivalMinutes': estimatedArrivalMinutes,
       'isOfflineQueued': isOfflineQueued,
       if (syncedAt != null) 'syncedAt': syncedAt!.toIso8601String(),
+      if (responderLat != null) 'responderLat': responderLat,
+      if (responderLng != null) 'responderLng': responderLng,
     };
   }
 
@@ -175,6 +188,8 @@ class EmergencyRequest {
       if (estimatedArrivalMinutes != null) 'estimated_arrival_minutes': estimatedArrivalMinutes,
       'is_offline_queued': isOfflineQueued ? 1 : 0,
       if (syncedAt != null) 'synced_at': syncedAt!.toIso8601String(),
+      if (responderLat != null) 'responder_lat': responderLat,
+      if (responderLng != null) 'responder_lng': responderLng,
     };
   }
 
@@ -189,15 +204,17 @@ class EmergencyRequest {
       longitude: (map['longitude'] ?? 0.0).toDouble(),
       address: map['address'],
       status: _parseEmergencyStatus(map['status'] ?? ''),
-      createdAt: DateTime.tryParse(map['created_at']) ?? DateTime.now(),
-      updatedAt: DateTime.tryParse(map['updated_at']) ?? DateTime.now(),
+      createdAt: DateTime.tryParse(map['created_at'] ?? '') ?? DateTime.now(),
+      updatedAt: DateTime.tryParse(map['updated_at'] ?? '') ?? DateTime.now(),
       responderId: map['responder_id']?.toString(),
       responderName: map['responder_name'],
       estimatedArrivalMinutes: map['estimated_arrival_minutes']?.toInt(),
       isOfflineQueued: (map['is_offline_queued'] ?? 0) == 1,
-      syncedAt: map['sync_at'] != null 
-          ? DateTime.tryParse(map['synced_at']) 
+      syncedAt: map['synced_at'] != null
+          ? DateTime.tryParse(map['synced_at'])
           : null,
+      responderLat: (map['responder_lat'] as num?)?.toDouble(),
+      responderLng: (map['responder_lng'] as num?)?.toDouble(),
     );
   }
 
