@@ -21,7 +21,7 @@ class DatabaseHelper {
   static Database? _database;
 
   /// Database version for migrations
-  static const int _databaseVersion = 2;
+  static const int _databaseVersion = 3;
 
   /// Database name
   static const String _databaseName = 'memaap.db';
@@ -203,6 +203,48 @@ class DatabaseHelper {
             // Column may already exist — safe to ignore
           }
         }
+      }
+
+      if (oldVersion < 3) {
+        // Migrate from v2 → v3: fix is_offline_queued column type mismatch.
+        // SQLite cannot ALTER COLUMN type, so we recreate the table.
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS emergency_requests_new (
+            $colRequestId TEXT PRIMARY KEY,
+            $colRequestUserId TEXT NOT NULL,
+            $colRequestType TEXT NOT NULL,
+            $colRequestDescription TEXT,
+            $colRequestLatitude REAL NOT NULL,
+            $colRequestLongitude REAL NOT NULL,
+            $colRequestStatus TEXT NOT NULL DEFAULT 'pending',
+            $colRequestCreatedAt TEXT NOT NULL,
+            $colRequestUpdatedAt TEXT NOT NULL,
+            $colRequestAddress TEXT,
+            $colRequestResponderId TEXT,
+            $colRequestResponderName TEXT,
+            $colRequestEstimatedArrival INTEGER,
+            $colRequestIsOfflineQueued INTEGER NOT NULL DEFAULT 0,
+            $colRequestSyncedAt TEXT,
+            $colRequestResponderLat REAL,
+            $colRequestResponderLng REAL
+          )
+        ''');
+        // Copy existing rows; cast is_offline_queued to INTEGER to avoid mismatch
+        await db.execute('''
+          INSERT OR IGNORE INTO emergency_requests_new
+            SELECT
+              id, user_id, type, description, latitude, longitude,
+              status, created_at, updated_at, address,
+              responder_id, responder_name, estimated_arrival_minutes,
+              CAST(is_offline_queued AS INTEGER),
+              synced_at, responder_lat, responder_lng
+            FROM $tableEmergencyRequests
+        ''');
+        await db.execute('DROP TABLE $tableEmergencyRequests');
+        await db.execute('ALTER TABLE emergency_requests_new RENAME TO $tableEmergencyRequests');
+        // Recreate indexes
+        await db.execute('CREATE INDEX IF NOT EXISTS idx_requests_user_id ON $tableEmergencyRequests ($colRequestUserId)');
+        await db.execute('CREATE INDEX IF NOT EXISTS idx_requests_status ON $tableEmergencyRequests ($colRequestStatus)');
       }
     } catch (e) {
       throw Exception('Failed to migrate database from version $oldVersion to $newVersion: $e');

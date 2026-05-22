@@ -1,12 +1,5 @@
 /// Enum for emergency types
-enum EmergencyType {
-  medical,
-  accident,
-  cardiac,
-  stroke,
-  trauma,
-  other,
-}
+enum EmergencyType { medical, accident, cardiac, stroke, trauma, other }
 
 extension EmergencyTypeExtension on EmergencyType {
   String get typeDisplayName {
@@ -38,7 +31,7 @@ enum EmergencyStatus {
 }
 
 /// Model class for emergency request data
-/// 
+///
 /// Represents an emergency request in the Mobile Emergency Medical Assistance App
 /// with location information, patient details, and status tracking.
 class EmergencyRequest {
@@ -52,11 +45,14 @@ class EmergencyRequest {
   final EmergencyStatus status;
   final DateTime createdAt;
   final DateTime updatedAt;
+  final String? patientName;
+  final String? patientPhone;
   final String? responderId;
   final String? responderName;
   final int? estimatedArrivalMinutes;
   final bool isOfflineQueued;
   final DateTime? syncedAt;
+
   /// Live responder GPS coordinates — updated by ResponderService as they move
   final double? responderLat;
   final double? responderLng;
@@ -72,6 +68,8 @@ class EmergencyRequest {
     required this.status,
     required this.createdAt,
     required this.updatedAt,
+    this.patientName,
+    this.patientPhone,
     this.responderId,
     this.responderName,
     this.estimatedArrivalMinutes,
@@ -93,6 +91,8 @@ class EmergencyRequest {
     EmergencyStatus? status,
     DateTime? createdAt,
     DateTime? updatedAt,
+    String? patientName,
+    String? patientPhone,
     String? responderId,
     String? responderName,
     int? estimatedArrivalMinutes,
@@ -112,9 +112,12 @@ class EmergencyRequest {
       status: status ?? this.status,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
+      patientName: patientName ?? this.patientName,
+      patientPhone: patientPhone ?? this.patientPhone,
       responderId: responderId ?? this.responderId,
       responderName: responderName ?? this.responderName,
-      estimatedArrivalMinutes: estimatedArrivalMinutes ?? this.estimatedArrivalMinutes,
+      estimatedArrivalMinutes:
+          estimatedArrivalMinutes ?? this.estimatedArrivalMinutes,
       isOfflineQueued: isOfflineQueued ?? this.isOfflineQueued,
       syncedAt: syncedAt ?? this.syncedAt,
       responderLat: responderLat ?? this.responderLat,
@@ -133,14 +136,23 @@ class EmergencyRequest {
       longitude: (json['longitude'] ?? json['lng'] ?? 0.0).toDouble(),
       address: json['address'],
       status: _parseEmergencyStatus(json['status'] ?? json['request_status']),
-      createdAt: DateTime.tryParse(json['createdAt'] ?? json['created_at']) ?? DateTime.now(),
-      updatedAt: DateTime.tryParse(json['updatedAt'] ?? json['updated_at']) ?? DateTime.now(),
+      createdAt:
+          DateTime.tryParse(json['createdAt'] ?? json['created_at']) ??
+          DateTime.now(),
+      updatedAt:
+          DateTime.tryParse(json['updatedAt'] ?? json['updated_at']) ??
+          DateTime.now(),
+      patientName: json['patientName'] ?? json['patient_name'],
+      patientPhone: json['patientPhone'] ?? json['patient_phone'],
       responderId: json['responderId']?.toString() ?? json['responder_id'],
       responderName: json['responderName'] ?? json['responder_name'],
-      estimatedArrivalMinutes: json['estimatedArrivalMinutes']?.toInt() ?? json['estimated_arrival_minutes']?.toInt(),
-      isOfflineQueued: json['isOfflineQueued'] ?? json['is_offline_queued'] ?? false,
-      syncedAt: json['syncedAt'] != null 
-          ? DateTime.tryParse(json['syncedAt']) 
+      estimatedArrivalMinutes:
+          json['estimatedArrivalMinutes']?.toInt() ??
+          json['estimated_arrival_minutes']?.toInt(),
+      isOfflineQueued:
+          json['isOfflineQueued'] ?? json['is_offline_queued'] ?? false,
+      syncedAt: json['syncedAt'] != null
+          ? DateTime.tryParse(json['syncedAt'])
           : null,
       responderLat: (json['responderLat'] ?? json['responder_lat'])?.toDouble(),
       responderLng: (json['responderLng'] ?? json['responder_lng'])?.toDouble(),
@@ -161,9 +173,12 @@ class EmergencyRequest {
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
       if (responderId != null) 'responderId': responderId,
+      if (patientName != null) 'patientName': patientName,
+      if (patientPhone != null) 'patientPhone': patientPhone,
       if (responderName != null) 'responderName': responderName,
-      if (estimatedArrivalMinutes != null) 'estimatedArrivalMinutes': estimatedArrivalMinutes,
-      'isOfflineQueued': isOfflineQueued,
+      if (estimatedArrivalMinutes != null)
+        'estimatedArrivalMinutes': estimatedArrivalMinutes,
+      'is_offline_queued': isOfflineQueued ? 1 : 0,
       if (syncedAt != null) 'syncedAt': syncedAt!.toIso8601String(),
       if (responderLat != null) 'responderLat': responderLat,
       if (responderLng != null) 'responderLng': responderLng,
@@ -185,7 +200,8 @@ class EmergencyRequest {
       'updated_at': updatedAt.toIso8601String(),
       if (responderId != null) 'responder_id': responderId,
       if (responderName != null) 'responder_name': responderName,
-      if (estimatedArrivalMinutes != null) 'estimated_arrival_minutes': estimatedArrivalMinutes,
+      if (estimatedArrivalMinutes != null)
+        'estimated_arrival_minutes': estimatedArrivalMinutes,
       'is_offline_queued': isOfflineQueued ? 1 : 0,
       if (syncedAt != null) 'synced_at': syncedAt!.toIso8601String(),
       if (responderLat != null) 'responder_lat': responderLat,
@@ -206,6 +222,8 @@ class EmergencyRequest {
       status: _parseEmergencyStatus(map['status'] ?? ''),
       createdAt: DateTime.tryParse(map['created_at'] ?? '') ?? DateTime.now(),
       updatedAt: DateTime.tryParse(map['updated_at'] ?? '') ?? DateTime.now(),
+      patientName: map['patient_name'],
+      patientPhone: map['patient_phone'],
       responderId: map['responder_id']?.toString(),
       responderName: map['responder_name'],
       estimatedArrivalMinutes: map['estimated_arrival_minutes']?.toInt(),
@@ -296,9 +314,9 @@ class EmergencyRequest {
 
   /// Checks if the request is active (not completed, cancelled, or expired)
   bool get isActive {
-    return status == EmergencyStatus.pending || 
-           status == EmergencyStatus.accepted || 
-           status == EmergencyStatus.inProgress;
+    return status == EmergencyStatus.pending ||
+        status == EmergencyStatus.accepted ||
+        status == EmergencyStatus.inProgress;
   }
 
   /// Checks if the request has been assigned to a responder
@@ -309,7 +327,7 @@ class EmergencyRequest {
   /// Gets the estimated arrival time as a formatted string
   String get estimatedArrivalText {
     if (estimatedArrivalMinutes == null) return 'Unknown';
-    
+
     if (estimatedArrivalMinutes! <= 1) {
       return 'Arriving now';
     } else if (estimatedArrivalMinutes! <= 60) {
@@ -359,9 +377,6 @@ class EmergencyRequest {
 
   @override
   int get hashCode {
-    return id.hashCode ^
-        userId.hashCode ^
-        type.hashCode ^
-        status.hashCode;
+    return id.hashCode ^ userId.hashCode ^ type.hashCode ^ status.hashCode;
   }
 }

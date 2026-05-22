@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:lucide_icons/lucide_icons.dart';
@@ -12,9 +11,7 @@ import '../models/emergency_request_model.dart';
 import '../models/user_model.dart';
 import '../repositories/emergency_repository.dart';
 import '../services/location_service.dart';
-import '../services/notification_service.dart';
 import '../services/responder_service.dart';
-import '../widgets/request_tile.dart';
 import '../controllers/map_controller.dart';
 import '../services/auth_service.dart';
 
@@ -34,43 +31,44 @@ class ResponderDashboardCubit extends Cubit<ResponderDashboardState> {
   /// Loads initial data and starts WebSocket listening + SQLite polling
   Future<void> initialize() async {
     emit(state.copyWith(isLoading: true));
-    
+
     try {
       // Get current user
       final user = await _getCurrentUser();
       if (user == null) {
-        emit(state.copyWith(
-          isLoading: false,
-          error: 'User not found',
-        ));
+        emit(state.copyWith(isLoading: false, error: 'User not found'));
         return;
       }
 
-      // Load all requests (including local/mock alerts)
-      final requests = await EmergencyRepository.getAllRequests();
+      // Load real pending requests and requests assigned to this responder.
+      final requests = await EmergencyRepository.getResponderDashboardRequests(
+        user.id,
+      );
 
-      // Start listening for incoming emergency requests via WebSocket
-      _listenForIncomingRequests(user.id);
-
-      // Start SQLite polling every 3 seconds so we catch new requests
-      // even when WebSocket is unavailable (offline / local dev mode)
-      EmergencyRepository.startPollingForRequests((polledRequests) {
+      EmergencyRepository.startPollingForRequests((_) async {
         if (!isClosed) {
+          final polledRequests =
+              await EmergencyRepository.getResponderDashboardRequests(user.id);
+
           // Merge polled list with current state — keep the newest unique set
           final merged = {
             for (final r in [...polledRequests, ...state.requests]) r.id: r,
-          }.values.toList()
-            ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+          }.values.toList()..sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
-          final hasNew = merged.length > state.requests.length ||
-              merged.any((r) =>
-                  r.status == EmergencyStatus.pending &&
-                  !state.requests.any((old) => old.id == r.id));
+          final hasNew =
+              merged.length > state.requests.length ||
+              merged.any(
+                (r) =>
+                    r.status == EmergencyStatus.pending &&
+                    !state.requests.any((old) => old.id == r.id),
+              );
 
-          emit(state.copyWith(
-            requests: merged,
-            hasNewRequest: hasNew ? true : state.hasNewRequest,
-          ));
+          emit(
+            state.copyWith(
+              requests: merged,
+              hasNewRequest: hasNew ? true : state.hasNewRequest,
+            ),
+          );
 
           if (hasNew) {
             Future.delayed(const Duration(seconds: 4), () {
@@ -79,17 +77,15 @@ class ResponderDashboardCubit extends Cubit<ResponderDashboardState> {
           }
         }
       });
-      
-      emit(state.copyWith(
-        isLoading: false,
-        user: user,
-        requests: requests,
-      ));
+
+      emit(state.copyWith(isLoading: false, user: user, requests: requests));
     } catch (e) {
-      emit(state.copyWith(
-        isLoading: false,
-        error: 'Failed to initialize dashboard: \$e',
-      ));
+      emit(
+        state.copyWith(
+          isLoading: false,
+          error: 'Failed to initialize dashboard: \$e',
+        ),
+      );
     }
   }
 
@@ -99,14 +95,7 @@ class ResponderDashboardCubit extends Cubit<ResponderDashboardState> {
       return await AuthService.getCurrentUser();
     } catch (e) {
       debugPrint('Failed to get authenticated responder: $e');
-      return UserModel(
-        id: 'responder_123',
-        name: 'Officer John Banda',
-        phone: '+265 999 123 456',
-        role: 'responder',
-        createdAt: DateTime.now(),
-        updatedAt: DateTime.now(),
-      );
+      return null;
     }
   }
 
@@ -114,31 +103,36 @@ class ResponderDashboardCubit extends Cubit<ResponderDashboardState> {
   void _listenForIncomingRequests(String responderId) {
     try {
       _requestsSubscription?.cancel();
-      _requestsSubscription = EmergencyRepository.watchRequest(responderId).listen(
-        (request) {
-          if (isClosed) return;
-          final currentState = state;
-          // Insert or update the request in the list
-          final updated = [request, ...currentState.requests.where((r) => r.id != request.id)];
-          updated.sort((a, b) => b.createdAt.compareTo(a.createdAt));
-          
-          emit(currentState.copyWith(
-            requests: updated,
-            hasNewRequest: true,
-          ));
-          
-          // Clear new request flag after a delay
-          Future.delayed(const Duration(seconds: 3), () {
-            if (!isClosed && state.requests.isNotEmpty) {
-              emit(state.copyWith(hasNewRequest: false));
-            }
-          });
-        },
-        onError: (e) {
-          // WebSocket failed — SQLite polling is the fallback, so just log
-          debugPrint('WebSocket stream error (dashboard polling fallback active): \$e');
-        },
-      );
+      _requestsSubscription = EmergencyRepository.watchRequest(responderId)
+          .listen(
+            (request) {
+              if (isClosed) return;
+              final currentState = state;
+              // Insert or update the request in the list
+              final updated = [
+                request,
+                ...currentState.requests.where((r) => r.id != request.id),
+              ];
+              updated.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
+              emit(
+                currentState.copyWith(requests: updated, hasNewRequest: true),
+              );
+
+              // Clear new request flag after a delay
+              Future.delayed(const Duration(seconds: 3), () {
+                if (!isClosed && state.requests.isNotEmpty) {
+                  emit(state.copyWith(hasNewRequest: false));
+                }
+              });
+            },
+            onError: (e) {
+              // WebSocket failed — SQLite polling is the fallback, so just log
+              debugPrint(
+                'WebSocket stream error (dashboard polling fallback active): \$e',
+              );
+            },
+          );
     } catch (e) {
       debugPrint('Failed to start WebSocket listener: \$e');
     }
@@ -147,17 +141,21 @@ class ResponderDashboardCubit extends Cubit<ResponderDashboardState> {
   /// Refreshes the requests list
   Future<void> refreshRequests() async {
     try {
-      final requests = await EmergencyRepository.getAllRequests();
-      
-      emit(state.copyWith(
-        isLoading: false,
-        requests: requests,
-      ));
+      final responderId = state.user?.id;
+      final requests = responderId == null
+          ? <EmergencyRequest>[]
+          : await EmergencyRepository.getResponderDashboardRequests(
+              responderId,
+            );
+
+      emit(state.copyWith(isLoading: false, requests: requests));
     } catch (e) {
-      emit(state.copyWith(
-        isLoading: false,
-        error: 'Failed to refresh requests: $e',
-      ));
+      emit(
+        state.copyWith(
+          isLoading: false,
+          error: 'Failed to refresh requests: $e',
+        ),
+      );
     }
   }
 
@@ -210,15 +208,18 @@ class ResponderDashboard extends StatefulWidget {
   State<ResponderDashboard> createState() => _ResponderDashboardState();
 }
 
-class _ResponderDashboardState extends State<ResponderDashboard> 
+class _ResponderDashboardState extends State<ResponderDashboard>
     with TickerProviderStateMixin {
   late ResponderDashboardCubit _cubit;
   int _currentIndex = 0;
-  
+
   // Custom states
   String _selectedFilter = 'all'; // all, pending, active, completed
   bool _isOnlineDuty = true;
-  LatLng _responderLocation = const LatLng(-15.786111, 35.005833); // Blantyre default
+  LatLng _responderLocation = const LatLng(
+    -15.786111,
+    35.005833,
+  ); // Blantyre default
   MapController? _mapController;
   StreamSubscription<Position>? _locationSubscription;
   EmergencyRequest? _selectedMapRequest;
@@ -232,13 +233,13 @@ class _ResponderDashboardState extends State<ResponderDashboard>
     super.initState();
     _cubit = ResponderDashboardCubit();
     _cubit.initialize();
-    
+
     // Initialize status pulse animation
     _pulseController = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 2),
     )..repeat(reverse: true);
-    
+
     _pulseAnimation = Tween<double>(begin: 4.0, end: 12.0).animate(
       CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
     );
@@ -260,22 +261,32 @@ class _ResponderDashboardState extends State<ResponderDashboard>
       final hasPermission = await LocationService.requestPermission();
       if (hasPermission) {
         final currentPos = await LocationService.getCurrentLocation();
-        if (currentPos != null) {
-          setState(() {
-            _responderLocation = LatLng(currentPos.latitude, currentPos.longitude);
-          });
-        }
+        setState(() {
+          _responderLocation = LatLng(
+            currentPos.latitude,
+            currentPos.longitude,
+          );
+        });
 
-        _locationSubscription = LocationService.getLocationStream(distanceFilter: 10)?.listen((position) {
-          if (mounted) {
-            setState(() {
-              _responderLocation = LatLng(position.latitude, position.longitude);
-              if (_mapController != null) {
-                _mapController!.updateAmbulancePosition('responder_self', _responderLocation);
+        _locationSubscription =
+            LocationService.getLocationStream(distanceFilter: 10).listen((
+              position,
+            ) {
+              if (mounted) {
+                setState(() {
+                  _responderLocation = LatLng(
+                    position.latitude,
+                    position.longitude,
+                  );
+                  if (_mapController != null) {
+                    _mapController!.updateAmbulancePosition(
+                      'responder_self',
+                      _responderLocation,
+                    );
+                  }
+                });
               }
             });
-          }
-        });
       }
     } catch (e) {
       debugPrint('Failed to load GPS location: $e');
@@ -288,7 +299,7 @@ class _ResponderDashboardState extends State<ResponderDashboard>
       _isOnlineDuty = isOnline;
     });
 
-    final success = await ResponderService.updateResponderAvailability(responderId, isOnline);
+    await ResponderService.updateResponderAvailability(responderId, isOnline);
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -299,10 +310,14 @@ class _ResponderDashboardState extends State<ResponderDashboard>
                 color: Colors.white,
               ),
               const SizedBox(width: 12),
-              Text(isOnline ? 'You are now ON ACTIVE DUTY' : 'You are now OFFLINE'),
+              Text(
+                isOnline ? 'You are now ON ACTIVE DUTY' : 'You are now OFFLINE',
+              ),
             ],
           ),
-          backgroundColor: isOnline ? const Color(0xFFE53935) : Colors.grey[800],
+          backgroundColor: isOnline
+              ? const Color(0xFFE53935)
+              : Colors.grey[800],
           behavior: SnackBarBehavior.floating,
         ),
       );
@@ -355,10 +370,7 @@ class _ResponderDashboardState extends State<ResponderDashboard>
           const SizedBox(height: 2),
           Text(
             user?.phone ?? '+265 999 123 456',
-            style: const TextStyle(
-              fontSize: 11,
-              color: Colors.white70,
-            ),
+            style: const TextStyle(fontSize: 11, color: Colors.white70),
           ),
         ],
       ),
@@ -372,8 +384,8 @@ class _ResponderDashboardState extends State<ResponderDashboard>
               padding: const EdgeInsets.all(4),
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: _isOnlineDuty 
-                    ? Colors.green.withOpacity(0.2) 
+                color: _isOnlineDuty
+                    ? Colors.green.withOpacity(0.2)
                     : Colors.grey.withOpacity(0.2),
               ),
               child: Container(
@@ -382,19 +394,21 @@ class _ResponderDashboardState extends State<ResponderDashboard>
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   color: _isOnlineDuty ? Colors.greenAccent : Colors.grey,
-                  boxShadow: _isOnlineDuty ? [
-                    BoxShadow(
-                      color: Colors.greenAccent,
-                      blurRadius: _pulseAnimation.value,
-                      spreadRadius: _pulseAnimation.value / 2,
-                    )
-                  ] : [],
+                  boxShadow: _isOnlineDuty
+                      ? [
+                          BoxShadow(
+                            color: Colors.greenAccent,
+                            blurRadius: _pulseAnimation.value,
+                            spreadRadius: _pulseAnimation.value / 2,
+                          ),
+                        ]
+                      : [],
                 ),
               ),
             );
           },
         ),
-        
+
         // Availability Toggle Text
         Text(
           _isOnlineDuty ? 'ACTIVE' : 'OFFLINE',
@@ -404,7 +418,7 @@ class _ResponderDashboardState extends State<ResponderDashboard>
             color: _isOnlineDuty ? Colors.white : Colors.white60,
           ),
         ),
-        
+
         // Availability Switch
         Switch(
           value: _isOnlineDuty,
@@ -452,7 +466,8 @@ class _ResponderDashboardState extends State<ResponderDashboard>
       if (_selectedFilter == 'pending') {
         return request.status == EmergencyStatus.pending;
       } else if (_selectedFilter == 'active') {
-        return request.status == EmergencyStatus.accepted || request.status == EmergencyStatus.inProgress;
+        return request.status == EmergencyStatus.accepted ||
+            request.status == EmergencyStatus.inProgress;
       } else if (_selectedFilter == 'completed') {
         return request.status == EmergencyStatus.completed;
       }
@@ -490,7 +505,9 @@ class _ResponderDashboardState extends State<ResponderDashboard>
 
   Widget _buildStatsRowBanner(ResponderDashboardState state) {
     final activeCount = state.requests.where((r) => r.isActive).length;
-    final pendingCount = state.requests.where((r) => r.status == EmergencyStatus.pending).length;
+    final pendingCount = state.requests
+        .where((r) => r.status == EmergencyStatus.pending)
+        .length;
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -509,12 +526,20 @@ class _ResponderDashboardState extends State<ResponderDashboard>
                   color: Colors.red[50],
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(LucideIcons.alertCircle, color: Color(0xFFE53935), size: 16),
+                child: const Icon(
+                  LucideIcons.alertCircle,
+                  color: Color(0xFFE53935),
+                  size: 16,
+                ),
               ),
               const SizedBox(width: 8),
               Text(
                 '$pendingCount Urgent SOS',
-                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFFE53935)),
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 13,
+                  color: Color(0xFFE53935),
+                ),
               ),
             ],
           ),
@@ -526,9 +551,13 @@ class _ResponderDashboardState extends State<ResponderDashboard>
             ),
             child: Text(
               '$activeCount Active Dispatches',
-              style: const TextStyle(color: Color(0xFF0033CC), fontSize: 11, fontWeight: FontWeight.bold),
+              style: const TextStyle(
+                color: Color(0xFF0033CC),
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+              ),
             ),
-          )
+          ),
         ],
       ),
     );
@@ -580,9 +609,15 @@ class _ResponderDashboardState extends State<ResponderDashboard>
     );
   }
 
-  Widget _buildPremiumRequestTile(EmergencyRequest request, ResponderDashboardState state) {
+  Widget _buildPremiumRequestTile(
+    EmergencyRequest request,
+    ResponderDashboardState state,
+  ) {
     final severityColor = _getEmergencyColor(request.type);
     final isPending = request.status == EmergencyStatus.pending;
+    final patientLabel = request.patientName?.trim().isNotEmpty == true
+        ? request.patientName!.trim()
+        : 'Patient ${request.userId}';
 
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
@@ -591,7 +626,9 @@ class _ResponderDashboardState extends State<ResponderDashboard>
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
         side: BorderSide(
-          color: isPending ? const Color(0xFFE53935).withOpacity(0.3) : Colors.transparent,
+          color: isPending
+              ? const Color(0xFFE53935).withOpacity(0.3)
+              : Colors.transparent,
           width: 1.5,
         ),
       ),
@@ -641,7 +678,18 @@ class _ResponderDashboardState extends State<ResponderDashboard>
                     const SizedBox(height: 6),
                     Text(
                       'SOS ID: #${request.id.substring(request.id.length > 5 ? request.id.length - 5 : 0)} • patient ID: ${request.userId}',
-                      style: TextStyle(color: Colors.grey[500], fontSize: 11, fontWeight: FontWeight.w600),
+                      style: TextStyle(
+                        color: Colors.grey[500],
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      patientLabel,
+                      style: TextStyle(color: Colors.grey[700], fontSize: 12),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 6),
                     if (request.description.isNotEmpty)
@@ -649,27 +697,45 @@ class _ResponderDashboardState extends State<ResponderDashboard>
                         request.description,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 13, color: Colors.black87),
+                        style: const TextStyle(
+                          fontSize: 13,
+                          color: Colors.black87,
+                        ),
                       ),
                     const SizedBox(height: 10),
                     Row(
                       children: [
-                        Icon(LucideIcons.mapPin, size: 12, color: Colors.grey[600]),
+                        Icon(
+                          LucideIcons.mapPin,
+                          size: 12,
+                          color: Colors.grey[600],
+                        ),
                         const SizedBox(width: 4),
                         Expanded(
                           child: Text(
-                            request.address ?? 'GPS: ${request.latitude.toStringAsFixed(4)}, ${request.longitude.toStringAsFixed(4)}',
-                            style: TextStyle(color: Colors.grey[600], fontSize: 12),
+                            request.address ??
+                                'GPS: ${request.latitude.toStringAsFixed(4)}, ${request.longitude.toStringAsFixed(4)}',
+                            style: TextStyle(
+                              color: Colors.grey[600],
+                              fontSize: 12,
+                            ),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
                         const SizedBox(width: 8),
-                        Icon(LucideIcons.clock, size: 12, color: Colors.grey[600]),
+                        Icon(
+                          LucideIcons.clock,
+                          size: 12,
+                          color: Colors.grey[600],
+                        ),
                         const SizedBox(width: 4),
                         Text(
                           request.timeAgo,
-                          style: TextStyle(color: Colors.grey[600], fontSize: 12),
+                          style: TextStyle(
+                            color: Colors.grey[600],
+                            fontSize: 12,
+                          ),
                         ),
                       ],
                     ),
@@ -696,7 +762,7 @@ class _ResponderDashboardState extends State<ResponderDashboard>
         break;
       case EmergencyStatus.accepted:
         bg = Colors.orange[50]!;
-        fg = Colors.orange[850]!;
+        fg = Colors.orange[800]!;
         label = 'En Route';
         break;
       case EmergencyStatus.inProgress:
@@ -794,13 +860,17 @@ class _ResponderDashboardState extends State<ResponderDashboard>
   }
 
   Widget _buildMapHeaderAlert(ResponderDashboardState state) {
-    final pendingCount = state.requests.where((r) => r.status == EmergencyStatus.pending).length;
+    final pendingCount = state.requests
+        .where((r) => r.status == EmergencyStatus.pending)
+        .length;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
         color: Colors.white.withOpacity(0.95),
         borderRadius: BorderRadius.circular(12),
-        boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 8, offset: Offset(0, 2))],
+        boxShadow: const [
+          BoxShadow(color: Colors.black12, blurRadius: 8, offset: Offset(0, 2)),
+        ],
       ),
       child: Row(
         children: [
@@ -812,8 +882,8 @@ class _ResponderDashboardState extends State<ResponderDashboard>
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              _isOnlineDuty 
-                  ? 'Listening live for SOS requests ($pendingCount pending)' 
+              _isOnlineDuty
+                  ? 'Listening live for SOS requests ($pendingCount pending)'
                   : 'You are currently offline. Go online to respond.',
               style: TextStyle(
                 fontSize: 12,
@@ -821,13 +891,16 @@ class _ResponderDashboardState extends State<ResponderDashboard>
                 color: _isOnlineDuty ? Colors.black87 : Colors.grey[600],
               ),
             ),
-          )
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildMapDetailCard(EmergencyRequest request, ResponderDashboardState state) {
+  Widget _buildMapDetailCard(
+    EmergencyRequest request,
+    ResponderDashboardState state,
+  ) {
     final severityColor = _getEmergencyColor(request.type);
 
     return Container(
@@ -835,7 +908,13 @@ class _ResponderDashboardState extends State<ResponderDashboard>
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
-        boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 12, offset: Offset(0, 4))],
+        boxShadow: const [
+          BoxShadow(
+            color: Colors.black26,
+            blurRadius: 12,
+            offset: Offset(0, 4),
+          ),
+        ],
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -851,7 +930,11 @@ class _ResponderDashboardState extends State<ResponderDashboard>
                 ),
                 child: Text(
                   request.typeDisplayName,
-                  style: TextStyle(color: severityColor, fontWeight: FontWeight.bold, fontSize: 11),
+                  style: TextStyle(
+                    color: severityColor,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 11,
+                  ),
                 ),
               ),
               const SizedBox(width: 8),
@@ -867,7 +950,7 @@ class _ResponderDashboardState extends State<ResponderDashboard>
                   });
                 },
                 icon: const Icon(LucideIcons.x, size: 18, color: Colors.grey),
-              )
+              ),
             ],
           ),
           const SizedBox(height: 12),
@@ -877,7 +960,9 @@ class _ResponderDashboardState extends State<ResponderDashboard>
           ),
           const SizedBox(height: 4),
           Text(
-            request.description.isNotEmpty ? request.description : 'No description provided.',
+            request.description.isNotEmpty
+                ? request.description
+                : 'No description provided.',
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(color: Colors.grey[700], fontSize: 13),
@@ -909,12 +994,24 @@ class _ResponderDashboardState extends State<ResponderDashboard>
                         color: const Color(0xFF0033CC),
                         width: 5,
                       );
-                      
+
                       // Animate between coordinates
-                      double minLat = _responderLocation.latitude < request.latitude ? _responderLocation.latitude : request.latitude;
-                      double maxLat = _responderLocation.latitude > request.latitude ? _responderLocation.latitude : request.latitude;
-                      double minLng = _responderLocation.longitude < request.longitude ? _responderLocation.longitude : request.longitude;
-                      double maxLng = _responderLocation.longitude > request.longitude ? _responderLocation.longitude : request.longitude;
+                      double minLat =
+                          _responderLocation.latitude < request.latitude
+                          ? _responderLocation.latitude
+                          : request.latitude;
+                      double maxLat =
+                          _responderLocation.latitude > request.latitude
+                          ? _responderLocation.latitude
+                          : request.latitude;
+                      double minLng =
+                          _responderLocation.longitude < request.longitude
+                          ? _responderLocation.longitude
+                          : request.longitude;
+                      double maxLng =
+                          _responderLocation.longitude > request.longitude
+                          ? _responderLocation.longitude
+                          : request.longitude;
 
                       _mapController!.controller?.animateCamera(
                         CameraUpdate.newLatLngBounds(
@@ -936,7 +1033,7 @@ class _ResponderDashboardState extends State<ResponderDashboard>
                 ),
               ),
             ],
-          )
+          ),
         ],
       ),
     );
@@ -959,8 +1056,10 @@ class _ResponderDashboardState extends State<ResponderDashboard>
 
       // Add markers for all active SOS requests
       for (final req in state.requests) {
-        if (req.status == EmergencyStatus.completed || req.status == EmergencyStatus.cancelled) continue;
-        
+        if (req.status == EmergencyStatus.completed ||
+            req.status == EmergencyStatus.cancelled)
+          continue;
+
         await _mapController!.addMarker(
           id: req.id,
           position: LatLng(req.latitude, req.longitude),
@@ -984,7 +1083,9 @@ class _ResponderDashboardState extends State<ResponderDashboard>
   // ───────────────────────────────────────────────────────────────────────────
   Widget _buildProfileTab(ResponderDashboardState state) {
     final user = state.user;
-    final totalDispatches = state.requests.where((r) => r.status == EmergencyStatus.completed).length;
+    final totalDispatches = state.requests
+        .where((r) => r.status == EmergencyStatus.completed)
+        .length;
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
@@ -1000,7 +1101,13 @@ class _ResponderDashboardState extends State<ResponderDashboard>
                 end: Alignment.bottomRight,
               ),
               borderRadius: BorderRadius.circular(20),
-              boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 10, offset: Offset(0, 4))],
+              boxShadow: const [
+                BoxShadow(
+                  color: Colors.black12,
+                  blurRadius: 10,
+                  offset: Offset(0, 4),
+                ),
+              ],
             ),
             child: Row(
               children: [
@@ -1008,8 +1115,14 @@ class _ResponderDashboardState extends State<ResponderDashboard>
                   radius: 36,
                   backgroundColor: Colors.white.withOpacity(0.2),
                   child: Text(
-                    user != null && user.name.isNotEmpty ? user.name[0].toUpperCase() : 'O',
-                    style: const TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.bold),
+                    user != null && user.name.isNotEmpty
+                        ? user.name[0].toUpperCase()
+                        : 'O',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 32,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ),
                 const SizedBox(width: 16),
@@ -1018,29 +1131,44 @@ class _ResponderDashboardState extends State<ResponderDashboard>
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        user?.name ?? 'Officer John Banda',
-                        style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                        user?.name ?? 'Responder',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                       const SizedBox(height: 4),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 2,
+                        ),
                         decoration: BoxDecoration(
                           color: Colors.white.withOpacity(0.15),
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: const Text(
                           'MEMAAP SENIOR PARAMEDIC',
-                          style: TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold, letterSpacing: 0.8),
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 9,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 0.8,
+                          ),
                         ),
                       ),
                       const SizedBox(height: 6),
                       Text(
                         'Agency ID: MEMAAP-BT-20593',
-                        style: TextStyle(color: Colors.white.withOpacity(0.8), fontSize: 11),
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.8),
+                          fontSize: 11,
+                        ),
                       ),
                     ],
                   ),
-                )
+                ),
               ],
             ),
           ),
@@ -1055,9 +1183,24 @@ class _ResponderDashboardState extends State<ResponderDashboard>
             mainAxisSpacing: 10,
             childAspectRatio: 1.1,
             children: [
-              _buildStatCard('Lives Saved', '$totalDispatches', LucideIcons.heart, Colors.red),
-              _buildStatCard('Response Rate', '98.5%', LucideIcons.activity, Colors.green),
-              _buildStatCard('Duty Level', 'Lvl 4', LucideIcons.award, Colors.blue),
+              _buildStatCard(
+                'Lives Saved',
+                '$totalDispatches',
+                LucideIcons.heart,
+                Colors.red,
+              ),
+              _buildStatCard(
+                'Response Rate',
+                '98.5%',
+                LucideIcons.activity,
+                Colors.green,
+              ),
+              _buildStatCard(
+                'Duty Level',
+                'Lvl 4',
+                LucideIcons.award,
+                Colors.blue,
+              ),
             ],
           ),
           const SizedBox(height: 20),
@@ -1067,7 +1210,9 @@ class _ResponderDashboardState extends State<ResponderDashboard>
             alignment: Alignment.centerLeft,
             child: Text(
               'Recent Dispatch History',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+              style: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
             ),
           ),
           const SizedBox(height: 10),
@@ -1087,7 +1232,9 @@ class _ResponderDashboardState extends State<ResponderDashboard>
                 backgroundColor: Colors.grey[800],
                 foregroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(vertical: 14),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
               ),
             ),
           ),
@@ -1097,13 +1244,20 @@ class _ResponderDashboardState extends State<ResponderDashboard>
     );
   }
 
-  Widget _buildStatCard(String title, String value, IconData icon, Color color) {
+  Widget _buildStatCard(
+    String title,
+    String value,
+    IconData icon,
+    Color color,
+  ) {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
-        boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 4, offset: Offset(0, 1))],
+        boxShadow: const [
+          BoxShadow(color: Colors.black12, blurRadius: 4, offset: Offset(0, 1)),
+        ],
       ),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -1112,12 +1266,20 @@ class _ResponderDashboardState extends State<ResponderDashboard>
           const SizedBox(height: 6),
           Text(
             value,
-            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.black87),
+            style: const TextStyle(
+              fontWeight: FontWeight.bold,
+              fontSize: 16,
+              color: Colors.black87,
+            ),
           ),
           const SizedBox(height: 4),
           Text(
             title,
-            style: TextStyle(color: Colors.grey[500], fontSize: 9, fontWeight: FontWeight.bold),
+            style: TextStyle(
+              color: Colors.grey[500],
+              fontSize: 9,
+              fontWeight: FontWeight.bold,
+            ),
             textAlign: TextAlign.center,
           ),
         ],
@@ -1126,7 +1288,9 @@ class _ResponderDashboardState extends State<ResponderDashboard>
   }
 
   Widget _buildDispatchHistoryList(ResponderDashboardState state) {
-    final completed = state.requests.where((r) => r.status == EmergencyStatus.completed).toList();
+    final completed = state.requests
+        .where((r) => r.status == EmergencyStatus.completed)
+        .toList();
 
     if (completed.isEmpty) {
       return Container(
@@ -1140,7 +1304,10 @@ class _ResponderDashboardState extends State<ResponderDashboard>
           children: [
             Icon(LucideIcons.clipboard, color: Colors.grey[300], size: 40),
             const SizedBox(height: 8),
-            Text('No dispatches completed yet.', style: TextStyle(color: Colors.grey[500])),
+            Text(
+              'No dispatches completed yet.',
+              style: TextStyle(color: Colors.grey[500]),
+            ),
           ],
         ),
       );
@@ -1163,8 +1330,15 @@ class _ResponderDashboardState extends State<ResponderDashboard>
             children: [
               Container(
                 padding: const EdgeInsets.all(6),
-                decoration: const BoxDecoration(color: Colors.greenAccent, shape: BoxShape.circle),
-                child: const Icon(LucideIcons.check, color: Colors.green, size: 14),
+                decoration: const BoxDecoration(
+                  color: Colors.greenAccent,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  LucideIcons.check,
+                  color: Colors.green,
+                  size: 14,
+                ),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -1173,7 +1347,10 @@ class _ResponderDashboardState extends State<ResponderDashboard>
                   children: [
                     Text(
                       req.typeDisplayName,
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13,
+                      ),
                     ),
                     Text(
                       req.address ?? 'Blantyre SOS Hub',
@@ -1187,7 +1364,7 @@ class _ResponderDashboardState extends State<ResponderDashboard>
               Text(
                 req.timeAgo,
                 style: TextStyle(color: Colors.grey[500], fontSize: 11),
-              )
+              ),
             ],
           ),
         );
@@ -1198,7 +1375,10 @@ class _ResponderDashboardState extends State<ResponderDashboard>
   // ───────────────────────────────────────────────────────────────────────────
   // INTERACTIVE WORKFLOW DETAIL SHEET (Accept ➔ Dispatch ➔ Complete)
   // ───────────────────────────────────────────────────────────────────────────
-  void _openRequestDetail(EmergencyRequest request, ResponderDashboardState state) {
+  void _openRequestDetail(
+    EmergencyRequest request,
+    ResponderDashboardState state,
+  ) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -1240,14 +1420,21 @@ class _ResponderDashboardState extends State<ResponderDashboard>
                   Row(
                     children: [
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 4,
+                        ),
                         decoration: BoxDecoration(
                           color: severityColor.withOpacity(0.1),
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: Text(
                           request.typeDisplayName,
-                          style: TextStyle(color: severityColor, fontWeight: FontWeight.bold, fontSize: 11),
+                          style: TextStyle(
+                            color: severityColor,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 11,
+                          ),
                         ),
                       ),
                       const SizedBox(width: 8),
@@ -1255,7 +1442,11 @@ class _ResponderDashboardState extends State<ResponderDashboard>
                       const Spacer(),
                       Text(
                         request.timeAgo,
-                        style: TextStyle(color: Colors.grey[500], fontSize: 11, fontWeight: FontWeight.w600),
+                        style: TextStyle(
+                          color: Colors.grey[500],
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ],
                   ),
@@ -1264,7 +1455,9 @@ class _ResponderDashboardState extends State<ResponderDashboard>
                   // Title details
                   Text(
                     'SOS Alert Details',
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                   const SizedBox(height: 6),
                   Container(
@@ -1275,23 +1468,37 @@ class _ResponderDashboardState extends State<ResponderDashboard>
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Text(
-                      request.description.isNotEmpty ? request.description : 'No additional details provided by patient.',
-                      style: const TextStyle(fontSize: 14, color: Colors.black87),
+                      request.description.isNotEmpty
+                          ? request.description
+                          : 'No additional details provided by patient.',
+                      style: const TextStyle(
+                        fontSize: 14,
+                        color: Colors.black87,
+                      ),
                     ),
                   ),
                   const SizedBox(height: 12),
 
                   // Patient metadata
-                  _buildMetaDetailRow(LucideIcons.user, 'Patient SOS ID', request.userId),
                   _buildMetaDetailRow(
-                    LucideIcons.mapPin, 
-                    'Emergency Address', 
-                    request.address ?? 'Coordinates: ${request.latitude.toStringAsFixed(5)}, ${request.longitude.toStringAsFixed(5)}'
+                    LucideIcons.user,
+                    'Patient',
+                    request.patientName?.trim().isNotEmpty == true
+                        ? '${request.patientName} (${request.userId})'
+                        : request.userId,
                   ),
                   _buildMetaDetailRow(
-                    LucideIcons.phone, 
-                    'Contact Number', 
-                    '+265 888 765 432 (Simulated)'
+                    LucideIcons.mapPin,
+                    'Emergency Address',
+                    request.address ??
+                        'Coordinates: ${request.latitude.toStringAsFixed(5)}, ${request.longitude.toStringAsFixed(5)}',
+                  ),
+                  _buildMetaDetailRow(
+                    LucideIcons.phone,
+                    'Contact Number',
+                    request.patientPhone?.trim().isNotEmpty == true
+                        ? request.patientPhone!.trim()
+                        : 'Not available',
                   ),
                   const SizedBox(height: 16),
 
@@ -1305,7 +1512,12 @@ class _ResponderDashboardState extends State<ResponderDashboard>
                   const SizedBox(height: 12),
 
                   // Dynamic action workflows based on status
-                  _buildActionControls(request, responderId, setSheetState),
+                  _buildActionControls(
+                    request,
+                    responderId,
+                    setSheetState,
+                    context,
+                  ),
                   const SizedBox(height: 12),
                 ],
               ),
@@ -1329,18 +1541,26 @@ class _ResponderDashboardState extends State<ResponderDashboard>
               text: TextSpan(
                 style: const TextStyle(color: Colors.black87, fontSize: 12.5),
                 children: [
-                  TextSpan(text: '$title: ', style: const TextStyle(fontWeight: FontWeight.bold)),
+                  TextSpan(
+                    text: '$title: ',
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
                   TextSpan(text: val),
                 ],
               ),
             ),
-          )
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildActionControls(EmergencyRequest request, String responderId, StateSetter setSheetState) {
+  Widget _buildActionControls(
+    EmergencyRequest request,
+    String responderId,
+    StateSetter setSheetState,
+    BuildContext sheetContext,
+  ) {
     if (request.status == EmergencyStatus.completed) {
       return Container(
         width: double.infinity,
@@ -1356,8 +1576,12 @@ class _ResponderDashboardState extends State<ResponderDashboard>
             SizedBox(width: 8),
             Text(
               'This emergency response has been resolved.',
-              style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 12),
-            )
+              style: TextStyle(
+                color: Colors.green,
+                fontWeight: FontWeight.bold,
+                fontSize: 12,
+              ),
+            ),
           ],
         ),
       );
@@ -1378,8 +1602,12 @@ class _ResponderDashboardState extends State<ResponderDashboard>
             SizedBox(width: 8),
             Text(
               'This alert was cancelled by the patient.',
-              style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold, fontSize: 12),
-            )
+              style: TextStyle(
+                color: Colors.grey,
+                fontWeight: FontWeight.bold,
+                fontSize: 12,
+              ),
+            ),
           ],
         ),
       );
@@ -1393,8 +1621,8 @@ class _ResponderDashboardState extends State<ResponderDashboard>
         child: ElevatedButton.icon(
           onPressed: () async {
             // Close details modal
-            Navigator.of(context).pop();
-            
+            Navigator.of(sheetContext).pop();
+
             // Accept SOS Flow
             final success = await ResponderService.acceptEmergencyRequest(
               context,
@@ -1414,7 +1642,9 @@ class _ResponderDashboardState extends State<ResponderDashboard>
           style: ElevatedButton.styleFrom(
             backgroundColor: const Color(0xFFE53935),
             foregroundColor: Colors.white,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
           ),
         ),
       );
@@ -1422,11 +1652,14 @@ class _ResponderDashboardState extends State<ResponderDashboard>
 
     // Step 2: Accepted (Paramedic is En Route)
     if (request.status == EmergencyStatus.accepted) {
+      final patientPhone = request.patientPhone?.trim();
       return Row(
         children: [
           Expanded(
             child: OutlinedButton.icon(
-              onPressed: () => _callPatientNumber('+265888765432'),
+              onPressed: patientPhone == null || patientPhone.isEmpty
+                  ? null
+                  : () => _callPatientNumber(patientPhone),
               icon: const Icon(LucideIcons.phone),
               label: const Text('Call Patient'),
               style: OutlinedButton.styleFrom(
@@ -1439,7 +1672,11 @@ class _ResponderDashboardState extends State<ResponderDashboard>
           const SizedBox(width: 12),
           Expanded(
             child: ElevatedButton.icon(
-              onPressed: () => _updateEmergencyWorkflow(request, EmergencyStatus.inProgress, setSheetState),
+              onPressed: () => _updateEmergencyWorkflow(
+                request,
+                EmergencyStatus.inProgress,
+                setSheetState,
+              ),
               icon: const Icon(LucideIcons.truck),
               label: const Text('ARRIVED ON SCENE'),
               style: ElevatedButton.styleFrom(
@@ -1448,18 +1685,21 @@ class _ResponderDashboardState extends State<ResponderDashboard>
                 padding: const EdgeInsets.symmetric(vertical: 14),
               ),
             ),
-          )
+          ),
         ],
       );
     }
 
     // Step 3: Arrived / On Scene
     if (request.status == EmergencyStatus.inProgress) {
+      final patientPhone = request.patientPhone?.trim();
       return Row(
         children: [
           Expanded(
             child: OutlinedButton.icon(
-              onPressed: () => _callPatientNumber('+265888765432'),
+              onPressed: patientPhone == null || patientPhone.isEmpty
+                  ? null
+                  : () => _callPatientNumber(patientPhone),
               icon: const Icon(LucideIcons.phone),
               label: const Text('Call dispatch'),
               style: OutlinedButton.styleFrom(
@@ -1472,7 +1712,11 @@ class _ResponderDashboardState extends State<ResponderDashboard>
           const SizedBox(width: 12),
           Expanded(
             child: ElevatedButton.icon(
-              onPressed: () => _updateEmergencyWorkflow(request, EmergencyStatus.completed, setSheetState),
+              onPressed: () => _updateEmergencyWorkflow(
+                request,
+                EmergencyStatus.completed,
+                setSheetState,
+              ),
               icon: const Icon(LucideIcons.check),
               label: const Text('MARK RESOLVED'),
               style: ElevatedButton.styleFrom(
@@ -1481,7 +1725,7 @@ class _ResponderDashboardState extends State<ResponderDashboard>
                 padding: const EdgeInsets.symmetric(vertical: 14),
               ),
             ),
-          )
+          ),
         ],
       );
     }
@@ -1500,10 +1744,17 @@ class _ResponderDashboardState extends State<ResponderDashboard>
   }
 
   /// Steps forward in the emergency state machine
-  Future<void> _updateEmergencyWorkflow(EmergencyRequest request, EmergencyStatus nextStatus, StateSetter setSheetState) async {
+  Future<void> _updateEmergencyWorkflow(
+    EmergencyRequest request,
+    EmergencyStatus nextStatus,
+    StateSetter setSheetState,
+  ) async {
     try {
-      final updated = await EmergencyRepository.updateRequestStatus(request.id, nextStatus);
-      
+      final updated = await EmergencyRepository.updateRequestStatus(
+        request.id,
+        nextStatus,
+      );
+
       // Update modal bottom sheet state dynamically
       setSheetState(() {
         request = updated;
@@ -1520,7 +1771,9 @@ class _ResponderDashboardState extends State<ResponderDashboard>
               children: [
                 const Icon(LucideIcons.checkCircle, color: Colors.white),
                 const SizedBox(width: 8),
-                Text('Emergency status changed to: ${updated.statusDisplayName}'),
+                Text(
+                  'Emergency status changed to: ${updated.statusDisplayName}',
+                ),
               ],
             ),
             backgroundColor: Colors.green,
@@ -1560,7 +1813,9 @@ class _ResponderDashboardState extends State<ResponderDashboard>
           _currentIndex = index;
         });
       },
-      selectedItemColor: const Color(0xFFE53935), // Signature emergency red color!
+      selectedItemColor: const Color(
+        0xFFE53935,
+      ), // Signature emergency red color!
       unselectedItemColor: Colors.grey[500],
       selectedLabelStyle: const TextStyle(fontWeight: FontWeight.bold),
       type: BottomNavigationBarType.fixed,
@@ -1589,18 +1844,25 @@ class _ResponderDashboardState extends State<ResponderDashboard>
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(LucideIcons.alertTriangle, size: 56, color: Color(0xFFE53935)),
+            const Icon(
+              LucideIcons.alertTriangle,
+              size: 56,
+              color: Color(0xFFE53935),
+            ),
             const SizedBox(height: 16),
             Text(
               error,
               textAlign: TextAlign.center,
-              style: const TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
+              style: const TextStyle(
+                color: Colors.red,
+                fontWeight: FontWeight.bold,
+              ),
             ),
             const SizedBox(height: 16),
             ElevatedButton(
               onPressed: () => _cubit.refreshRequests(),
               child: const Text('Try Again'),
-            )
+            ),
           ],
         ),
       ),
@@ -1618,7 +1880,11 @@ class _ResponderDashboardState extends State<ResponderDashboard>
             const SizedBox(height: 16),
             const Text(
               'No active emergency alerts found',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.black54),
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 16,
+                color: Colors.black54,
+              ),
             ),
             const SizedBox(height: 8),
             Text(

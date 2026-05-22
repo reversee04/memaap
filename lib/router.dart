@@ -5,6 +5,7 @@ import 'screens/login_screen.dart';
 import 'screens/register_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/confirm_request_screen.dart';
+import 'screens/patient_tracking_screen.dart';
 import 'screens/tracking_screen.dart';
 import 'screens/timeline_screen.dart';
 import 'screens/hospitals_screen.dart';
@@ -13,19 +14,24 @@ import 'screens/responder_dashboard.dart';
 import 'widgets/bottom_nav_bar.dart';
 
 final _rootNavigatorKey = GlobalKey<NavigatorState>();
-final _shellNavigatorHomeKey = GlobalKey<NavigatorState>(debugLabel: 'shellHome');
-final _shellNavigatorHospitalsKey = GlobalKey<NavigatorState>(debugLabel: 'shellHospitals');
-final _shellNavigatorTrackingKey = GlobalKey<NavigatorState>(debugLabel: 'shellTracking');
-final _shellNavigatorProfileKey = GlobalKey<NavigatorState>(debugLabel: 'shellProfile');
+final _shellNavigatorHomeKey = GlobalKey<NavigatorState>(
+  debugLabel: 'shellHome',
+);
+final _shellNavigatorHospitalsKey = GlobalKey<NavigatorState>(
+  debugLabel: 'shellHospitals',
+);
+final _shellNavigatorTrackingKey = GlobalKey<NavigatorState>(
+  debugLabel: 'shellTracking',
+);
+final _shellNavigatorProfileKey = GlobalKey<NavigatorState>(
+  debugLabel: 'shellProfile',
+);
 
 final goRouter = GoRouter(
   initialLocation: '/login',
   navigatorKey: _rootNavigatorKey,
   routes: [
-    GoRoute(
-      path: '/login',
-      builder: (context, state) => const LoginScreen(),
-    ),
+    GoRoute(path: '/login', builder: (context, state) => const LoginScreen()),
     GoRoute(
       path: '/register',
       builder: (context, state) => const RegisterScreen(),
@@ -68,11 +74,17 @@ final goRouter = GoRouter(
           routes: [
             GoRoute(
               path: '/tracking',
-              builder: (context, state) => TrackingScreen(requestId: state.extra != null ? (state.extra as Map)['requestId'] ?? '' : ''),
+              builder: (context, state) => const PatientTrackingScreen(),
               routes: [
                 GoRoute(
                   path: 'timeline',
                   builder: (context, state) => const TimelineScreen(),
+                ),
+                GoRoute(
+                  path: ':requestId',
+                  builder: (context, state) => TrackingScreen(
+                    requestId: state.pathParameters['requestId'] ?? '',
+                  ),
                 ),
               ],
             ),

@@ -49,8 +49,10 @@ class EmergencyRepository {
       );
 
       // Check initial connectivity
-      final connectivityResult = await Connectivity().checkConnectivity();
-      _isOnline = connectivityResult != ConnectivityResult.none;
+      final connectivityResults = await Connectivity().checkConnectivity();
+      _isOnline = connectivityResults.any(
+        (result) => result != ConnectivityResult.none,
+      );
 
       // Start periodic sync
       _startPeriodicSync();
@@ -190,6 +192,69 @@ class EmergencyRepository {
     }
   }
 
+  /// Gets all pending emergency requests visible to responders.
+  static Future<List<EmergencyRequest>> getPendingRequests() async {
+    try {
+      if (_isOnline) {
+        final response = await ApiClient.get('/emergency/pending');
+        final requests = (response['emergencies'] as List)
+            .map((json) => EmergencyRequest.fromJson(json))
+            .toList();
+
+        for (final request in requests) {
+          await _storeRequestLocally(request);
+        }
+
+        return requests;
+      }
+    } catch (e) {
+      // Fall through to local cache below.
+    }
+
+    return _getRequestsFromDatabase(status: EmergencyStatus.pending);
+  }
+
+  /// Gets requests assigned to the current responder.
+  static Future<List<EmergencyRequest>> getResponderRequests(
+    String responderId,
+  ) async {
+    try {
+      if (_isOnline) {
+        final response = await ApiClient.get(
+          '/emergency/responder/$responderId',
+        );
+        final requests = (response['emergencies'] as List)
+            .map((json) => EmergencyRequest.fromJson(json))
+            .toList();
+
+        for (final request in requests) {
+          await _storeRequestLocally(request);
+        }
+
+        return requests;
+      }
+    } catch (e) {
+      // Fall through to local cache below.
+    }
+
+    return _getRequestsFromDatabase(responderId: responderId);
+  }
+
+  /// Gets pending requests plus requests already assigned to this responder.
+  static Future<List<EmergencyRequest>> getResponderDashboardRequests(
+    String responderId,
+  ) async {
+    final pending = await getPendingRequests();
+    final assigned = await getResponderRequests(responderId);
+
+    final merged = <String, EmergencyRequest>{
+      for (final request in pending) request.id: request,
+      for (final request in assigned) request.id: request,
+    }.values.toList()..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
+    return merged;
+  }
+
   /// Gets all emergency requests from the local database
   static Future<List<EmergencyRequest>> getAllRequests() async {
     try {
@@ -247,7 +312,6 @@ class EmergencyRepository {
         if (existingRequest != null) {
           final updatedRequest = existingRequest.copyWith(
             responderId: responderId,
-            responderName: 'John Responder', // Mock name
           );
           await _updateRequestInDatabase(updatedRequest);
           await _queueRequestForSync(updatedRequest, 'assign_responder');
@@ -262,7 +326,6 @@ class EmergencyRepository {
       if (existingRequest != null) {
         final updatedRequest = existingRequest.copyWith(
           responderId: responderId,
-          responderName: 'John Responder',
         );
         await _updateRequestInDatabase(updatedRequest);
         return updatedRequest;
@@ -286,7 +349,7 @@ class EmergencyRepository {
       if (_isOnline) {
         final response = await ApiClient.put(
           '/emergency/$id/status',
-          data: {'status': status.name},
+          data: {'status': _statusToApiValue(status)},
         );
 
         final updatedRequest = EmergencyRequest.fromJson(response['emergency']);
@@ -624,6 +687,50 @@ class EmergencyRepository {
           .toList();
     } catch (e) {
       return [];
+    }
+  }
+
+  static Future<List<EmergencyRequest>> _getRequestsFromDatabase({
+    EmergencyStatus? status,
+    String? responderId,
+  }) async {
+    try {
+      final db = await DatabaseHelper().database;
+
+      final whereParts = <String>[];
+      final whereArgs = <dynamic>[];
+
+      if (status != null) {
+        whereParts.add('status = ?');
+        whereArgs.add(status.name);
+      }
+
+      if (responderId != null) {
+        whereParts.add('responder_id = ?');
+        whereArgs.add(responderId);
+      }
+
+      final results = await db.query(
+        DatabaseHelper.tableEmergencyRequests,
+        where: whereParts.isEmpty ? null : whereParts.join(' AND '),
+        whereArgs: whereArgs.isEmpty ? null : whereArgs,
+        orderBy: 'created_at DESC',
+      );
+
+      return results
+          .map((row) => EmergencyRequest.fromDatabaseMap(row))
+          .toList();
+    } catch (e) {
+      return [];
+    }
+  }
+
+  static String _statusToApiValue(EmergencyStatus status) {
+    switch (status) {
+      case EmergencyStatus.inProgress:
+        return 'in_progress';
+      default:
+        return status.name;
     }
   }
 

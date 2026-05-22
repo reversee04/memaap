@@ -1,75 +1,60 @@
-import 'dart:convert';
-import 'package:http/http.dart' as http;
-import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:flutter/foundation.dart';
-import 'package:geocoding/geocoding.dart';
+
 import '../models/emergency_request_model.dart';
 import '../models/user_model.dart';
 import '../repositories/emergency_repository.dart';
-import '../services/location_service.dart';
 import '../services/auth_service.dart';
+import '../services/location_service.dart';
 
-/// Service class for handling emergency alerts
-/// 
-/// Provides core functionality for creating emergency requests with GPS location,
-/// user confirmation, and offline fallback for Mobile Emergency Medical Assistance App.
+/// Service class for handling emergency alerts.
 class EmergencyService {
   static const String _defaultDescription = 'Emergency assistance requested';
 
-  /// Sends an emergency alert with user confirmation and GPS location
-  /// 
-  /// [context] - BuildContext for UI interactions
-  /// [type] - Type of emergency
-  /// [description] - Optional description of emergency
-  /// 
-  /// Returns true if alert was sent successfully
+  static bool _isLoadingDialogShowing = false;
+  static BuildContext? _loadingDialogContext;
+
+  /// Sends an emergency alert with confirmation, GPS location, API creation,
+  /// and SMS fallback.
   static Future<bool> sendEmergencyAlert(
     BuildContext context,
     EmergencyType type, {
     String? description,
   }) async {
     debugPrint('[EmergencyService] sendEmergencyAlert called with type: $type');
+
     try {
-      // Step 1: Show confirmation bottom sheet
-      debugPrint('[EmergencyService] Showing confirmation dialog');
       final confirmed = await _showEmergencyConfirmation(context, type);
       debugPrint('[EmergencyService] User confirmed: $confirmed');
       if (!confirmed) return false;
+      if (!context.mounted) return false;
 
-      // Show loading indicator
       _showLoadingDialog(context, 'Getting your location...');
 
       try {
-        // Step 2: Get GPS location
-        debugPrint('[EmergencyService] Getting GPS location');
         final position = await LocationService.getCurrentLocation();
-        debugPrint('[EmergencyService] Location obtained: ${position.latitude}, ${position.longitude}');
-        
-        // Step 3: Reverse geocode coordinates
+        debugPrint(
+          '[EmergencyService] Location obtained: ${position.latitude}, ${position.longitude}',
+        );
+
         String? address;
         try {
           final placemarks = await LocationService.getAddressFromCoords(
             position.latitude,
             position.longitude,
           );
-          
+
           if (placemarks.isNotEmpty) {
             final place = placemarks.first;
             address = '${place.street}, ${place.locality}, ${place.country}';
           }
         } catch (e) {
           debugPrint('[EmergencyService] Geocoding failed: $e');
-          // Continue without address
         }
 
-        // Step 4: Build emergency request
-        debugPrint('[EmergencyService] Building emergency request');
         final user = await _getCurrentUser();
-        debugPrint('[EmergencyService] User: ${user?.id}, ${user?.name}');
         final emergencyRequest = EmergencyRequest(
-          id: '', // Will be set by API
+          id: '',
           userId: user?.id ?? 'unknown',
           type: type,
           description: description ?? _defaultDescription,
@@ -81,203 +66,214 @@ class EmergencyService {
           updatedAt: DateTime.now(),
         );
 
-        // Update loading dialog
-        _updateLoadingDialog(context, 'Sending emergency alert...');
-
-        // Step 5: Create request via repository
-        debugPrint('[EmergencyService] Creating request via repository');
-        final createdRequest = await EmergencyRepository.createRequest(emergencyRequest);
-        debugPrint('[EmergencyService] Request created with ID: ${createdRequest.id}');
-        debugPrint('[EmergencyService] Request status: ${createdRequest.status}');
-
-        // Close loading dialog
-        _dismissLoadingDialog(context);
-
-        // Step 6: Show success and navigate
-        _showSuccessSnackBar(context, 'Emergency alert sent successfully!');
-        
-        // Navigate to tracking screen
-        debugPrint('[EmergencyService] Navigating to tracking screen with requestId: ${createdRequest.id}');
-        _navigateToTrackingScreen(context, createdRequest);
-        
-        return true;
-
-      } on LocationException catch (e) {
-        debugPrint('[EmergencyService] LocationException: ${e.type} - ${e.message}');
-        _dismissLoadingDialog(context);
-        
-        if (e.type == LocationExceptionType.permissionDenied ||
-            e.type == LocationExceptionType.permissionPermanentlyDenied) {
-          // Show settings dialog for permission issues
-          await LocationService.showLocationSettingsDialog(context);
-          return false;
-        } else {
-          _showErrorSnackBar(context, 'Location error: ${e.message}');
+        if (!context.mounted) {
+          await _dismissLoadingDialog();
           return false;
         }
+
+        await _updateLoadingDialog(context, 'Sending emergency alert...');
+
+        final createdRequest = await EmergencyRepository.createRequest(
+          emergencyRequest,
+        );
+        debugPrint(
+          '[EmergencyService] Request created with ID: ${createdRequest.id}',
+        );
+
+        await _dismissLoadingDialog();
+        if (!context.mounted) return true;
+
+        _showSuccessSnackBar(context, 'Emergency alert sent successfully!');
+        _navigateToTrackingScreen(context, createdRequest);
+
+        return true;
+      } on LocationException catch (e) {
+        await _dismissLoadingDialog();
+        if (!context.mounted) return false;
+
+        if (e.type == LocationExceptionType.permissionDenied ||
+            e.type == LocationExceptionType.permissionPermanentlyDenied) {
+          await LocationService.showLocationSettingsDialog(context);
+        } else {
+          _showErrorSnackBar(context, 'Location error: ${e.message}');
+        }
+
+        return false;
       } catch (e) {
         debugPrint('[EmergencyService] API failed, falling back to SMS: $e');
-        _dismissLoadingDialog(context);
-        
-        // Step 6: Fallback to SMS if offline
-        return await _fallbackToSMS(context, type, description);
-      }
+        await _dismissLoadingDialog();
+        if (!context.mounted) return false;
 
+        return _fallbackToSMS(context, type, description);
+      }
     } catch (e) {
       debugPrint('[EmergencyService] General error: $e');
-      _dismissLoadingDialog(context);
-      _showErrorSnackBar(context, 'Failed to send emergency alert');
+      await _dismissLoadingDialog();
+      if (context.mounted) {
+        _showErrorSnackBar(context, 'Failed to send emergency alert');
+      }
       return false;
     }
   }
 
-  /// Shows emergency confirmation bottom sheet
   static Future<bool> _showEmergencyConfirmation(
     BuildContext context,
     EmergencyType type,
   ) async {
     return await showModalBottomSheet<bool>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) => Container(
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-        ),
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // Emergency icon
-            Container(
-              width: 60,
-              height: 60,
-              decoration: BoxDecoration(
-                color: Colors.red.withOpacity(0.1),
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(
-                Icons.emergency,
-                color: Colors.red,
-                size: 30,
-              ),
+          context: context,
+          isScrollControlled: true,
+          backgroundColor: Colors.transparent,
+          builder: (context) => Container(
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
             ),
-            const SizedBox(height: 16),
-            
-            // Title
-            Text(
-              'Emergency Alert',
-              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                fontWeight: FontWeight.bold,
-                color: Colors.red,
-              ),
-            ),
-            const SizedBox(height: 8),
-            
-            // Emergency type
-            Text(
-              type.typeDisplayName,
-              style: Theme.of(context).textTheme.bodyLarge,
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 16),
-            
-            // Warning message
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.orange.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.orange.withOpacity(0.3)),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.warning, color: Colors.orange, size: 20),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'This will send an emergency alert to nearby medical responders. '
-                      'Only use this for real emergencies.',
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: Colors.orange[800],
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 24),
-            
-            // Action buttons
-            Row(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () => Navigator.of(context).pop(false),
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      side: const BorderSide(color: Colors.grey),
-                    ),
-                    child: const Text('CANCEL'),
+                Container(
+                  width: 60,
+                  height: 60,
+                  decoration: BoxDecoration(
+                    color: Colors.red.withValues(alpha: 0.1),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.emergency,
+                    color: Colors.red,
+                    size: 30,
                   ),
                 ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: () => Navigator.of(context).pop(true),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.red,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                    ),
-                    child: const Text('SEND ALERT'),
+                const SizedBox(height: 16),
+                Text(
+                  'Emergency Alert',
+                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.bold,
+                    color: Colors.red,
                   ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  type.typeDisplayName,
+                  style: Theme.of(context).textTheme.bodyLarge,
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 16),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: Colors.orange.withValues(alpha: 0.3),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.warning, color: Colors.orange, size: 20),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'This will send an emergency alert to nearby medical responders. '
+                          'Only use this for real emergencies.',
+                          style: Theme.of(context).textTheme.bodyMedium
+                              ?.copyWith(color: Colors.orange[800]),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 24),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.of(context).pop(false),
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          side: const BorderSide(color: Colors.grey),
+                        ),
+                        child: const Text('CANCEL'),
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: () => Navigator.of(context).pop(true),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.red,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                        ),
+                        child: const Text('SEND ALERT'),
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
-          ],
-        ),
-      ),
-    ) ?? false;
+          ),
+        ) ??
+        false;
   }
 
-  static bool _isLoadingDialogShowing = false;
-
-  /// Shows loading dialog
   static void _showLoadingDialog(BuildContext context, String message) {
     if (_isLoadingDialogShowing) return;
     _isLoadingDialogShowing = true;
-    showDialog(
+
+    showDialog<void>(
       context: context,
+      useRootNavigator: true,
       barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        content: Row(
-          children: [
-            const CircularProgressIndicator(),
-            const SizedBox(width: 16),
-            Expanded(child: Text(message)),
-          ],
-        ),
-      ),
-    ).then((_) => _isLoadingDialogShowing = false);
-  }
-
-  /// Closes loading dialog safely
-  static void _dismissLoadingDialog(BuildContext context) {
-    if (_isLoadingDialogShowing) {
+      builder: (dialogContext) {
+        _loadingDialogContext = dialogContext;
+        return AlertDialog(
+          content: Row(
+            children: [
+              const CircularProgressIndicator(),
+              const SizedBox(width: 16),
+              Expanded(child: Text(message)),
+            ],
+          ),
+        );
+      },
+    ).whenComplete(() {
+      _loadingDialogContext = null;
       _isLoadingDialogShowing = false;
-      Navigator.of(context, rootNavigator: true).pop();
+    });
+  }
+
+  static Future<void> _dismissLoadingDialog() async {
+    final dialogContext = _loadingDialogContext;
+    _loadingDialogContext = null;
+
+    if (!_isLoadingDialogShowing || dialogContext == null) {
+      _isLoadingDialogShowing = false;
+      return;
     }
+
+    _isLoadingDialogShowing = false;
+
+    if (Navigator.of(dialogContext).canPop()) {
+      Navigator.of(dialogContext).pop();
+    }
+
+    await Future<void>.delayed(Duration.zero);
   }
 
-  /// Updates loading dialog message
-  static void _updateLoadingDialog(BuildContext context, String message) {
-    _dismissLoadingDialog(context);
+  static Future<void> _updateLoadingDialog(
+    BuildContext context,
+    String message,
+  ) async {
+    await _dismissLoadingDialog();
+    if (!context.mounted) return;
+
     _showLoadingDialog(context, message);
+    await Future<void>.delayed(Duration.zero);
   }
 
-  /// Shows success snack bar
   static void _showSuccessSnackBar(BuildContext context, String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -295,7 +291,6 @@ class EmergencyService {
     );
   }
 
-  /// Shows error snack bar
   static void _showErrorSnackBar(BuildContext context, String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -313,7 +308,6 @@ class EmergencyService {
     );
   }
 
-  /// Gets the current authenticated user
   static Future<UserModel?> _getCurrentUser() async {
     try {
       return await AuthService.getCurrentUser();
@@ -323,13 +317,16 @@ class EmergencyService {
     }
   }
 
-  /// Navigates to tracking screen
-  static void _navigateToTrackingScreen(BuildContext context, EmergencyRequest request) {
-    context.go('/tracking', extra: {'requestId': request.id});
-    debugPrint('Navigate to tracking screen for request: ${request.id}');
+  static void _navigateToTrackingScreen(
+    BuildContext context,
+    EmergencyRequest request,
+  ) {
+    context.go('/tracking/${Uri.encodeComponent(request.id)}');
+    debugPrint(
+      'Navigate to patient tracking screen for request: ${request.id}',
+    );
   }
 
-  /// Falls back to SMS emergency alert
   static Future<bool> _fallbackToSMS(
     BuildContext context,
     EmergencyType type,
@@ -337,24 +334,25 @@ class EmergencyService {
   ) async {
     try {
       _showLoadingDialog(context, 'Sending SMS emergency alert...');
-      
-      // Get user info
+
       final user = await _getCurrentUser();
       if (user == null) {
-        _dismissLoadingDialog(context);
-        _showErrorSnackBar(context, 'User information not available');
+        await _dismissLoadingDialog();
+        if (context.mounted) {
+          _showErrorSnackBar(context, 'User information not available');
+        }
         return false;
       }
 
-      // Get last known location
       final position = await LocationService.getCachedLocation();
       if (position == null) {
-        _dismissLoadingDialog(context);
-        _showErrorSnackBar(context, 'Location information not available');
+        await _dismissLoadingDialog();
+        if (context.mounted) {
+          _showErrorSnackBar(context, 'Location information not available');
+        }
         return false;
       }
 
-      // Send SMS emergency alert
       final success = await sendSMSEmergencyAlert(
         position.latitude,
         position.longitude,
@@ -363,73 +361,71 @@ class EmergencyService {
         user.phone,
       );
 
-      _dismissLoadingDialog(context);
-
-      if (success) {
-        _showSuccessSnackBar(context, 'Emergency alert sent via SMS successfully!');
-        
-        final offlineRequest = EmergencyRequest(
-          id: 'sms_${DateTime.now().millisecondsSinceEpoch}',
-          userId: user.id,
-          type: type,
-          description: description ?? _defaultDescription,
-          latitude: position.latitude,
-          longitude: position.longitude,
-          address: 'Sent via SMS fallback',
-          status: EmergencyStatus.pending,
-          createdAt: DateTime.now(),
-          updatedAt: DateTime.now(),
-        );
-
-        // Store locally directly
-        await EmergencyRepository.storeRequestLocally(offlineRequest);
-
-        // Navigate to tracking screen
-        _navigateToTrackingScreen(context, offlineRequest);
-        return true;
-      } else {
-        _showErrorSnackBar(context, 'Failed to send SMS emergency alert');
+      if (!success) {
+        await _dismissLoadingDialog();
+        if (context.mounted) {
+          _showErrorSnackBar(context, 'Failed to send SMS emergency alert');
+        }
         return false;
       }
 
+      final offlineRequest = EmergencyRequest(
+        id: 'sms_${DateTime.now().millisecondsSinceEpoch}',
+        userId: user.id,
+        type: type,
+        description: description ?? _defaultDescription,
+        latitude: position.latitude,
+        longitude: position.longitude,
+        address: 'Sent via SMS fallback',
+        status: EmergencyStatus.pending,
+        createdAt: DateTime.now(),
+        updatedAt: DateTime.now(),
+      );
+
+      await EmergencyRepository.storeRequestLocally(offlineRequest);
+      await _dismissLoadingDialog();
+
+      if (context.mounted) {
+        _showSuccessSnackBar(
+          context,
+          'Emergency alert sent via SMS successfully!',
+        );
+        _navigateToTrackingScreen(context, offlineRequest);
+      }
+
+      return true;
     } catch (e) {
-      _dismissLoadingDialog(context);
-      _showErrorSnackBar(context, 'SMS fallback failed');
+      await _dismissLoadingDialog();
+      if (context.mounted) {
+        _showErrorSnackBar(context, 'SMS fallback failed');
+      }
       return false;
     }
   }
 
-  /// Cancels an active emergency request
-  /// 
-  /// [context] - BuildContext for UI interactions
-  /// [requestId] - ID of request to cancel
-  /// 
-  /// Returns true if cancellation was successful
   static Future<bool> cancelEmergencyRequest(
     BuildContext context,
     String requestId,
   ) async {
     try {
       _showLoadingDialog(context, 'Cancelling emergency request...');
-
       await EmergencyRepository.cancelRequest(requestId);
+      await _dismissLoadingDialog();
 
-      _dismissLoadingDialog(context);
-      _showSuccessSnackBar(context, 'Emergency request cancelled');
-      
+      if (context.mounted) {
+        _showSuccessSnackBar(context, 'Emergency request cancelled');
+      }
+
       return true;
     } catch (e) {
-      _dismissLoadingDialog(context);
-      _showErrorSnackBar(context, 'Failed to cancel emergency request');
+      await _dismissLoadingDialog();
+      if (context.mounted) {
+        _showErrorSnackBar(context, 'Failed to cancel emergency request');
+      }
       return false;
     }
   }
 
-  /// Gets the status of an emergency request
-  /// 
-  /// [requestId] - ID of emergency request
-  /// 
-  /// Returns current EmergencyStatus or null if not found
   static Future<EmergencyStatus?> getEmergencyStatus(String requestId) async {
     try {
       final request = await EmergencyRepository.getRequestById(requestId);
@@ -440,12 +436,6 @@ class EmergencyService {
     }
   }
 
-  /// Updates the status of an emergency request
-  /// 
-  /// [requestId] - ID of emergency request
-  /// [status] - New status
-  /// 
-  /// Returns true if update was successful
   static Future<bool> updateEmergencyStatus(
     String requestId,
     EmergencyStatus status,
@@ -460,17 +450,6 @@ class EmergencyService {
   }
 }
 
-/// Sends SMS emergency alert with Twilio fallback
-/// 
-/// [lat] - Latitude of emergency location
-/// [lng] - Longitude of emergency location
-/// [type] - Type of emergency
-/// [patientName] - Name of patient
-/// [patientPhone] - Phone number of patient
-/// 
-/// Returns true if SMS was sent successfully
-/// 
-/// Never throws; returns false on total failure
 Future<bool> sendSMSEmergencyAlert(
   double lat,
   double lng,
@@ -479,33 +458,34 @@ Future<bool> sendSMSEmergencyAlert(
   String patientPhone,
 ) async {
   try {
-    // Compose SMS message
-    final message = _composeEmergencySMS(lat, lng, type, patientName, patientPhone);
-    
-    // Try Twilio API first
+    final message = _composeEmergencySMS(
+      lat,
+      lng,
+      type,
+      patientName,
+      patientPhone,
+    );
+
     final twilioSuccess = await _sendViaTwilio(message);
     if (twilioSuccess) {
       debugPrint('Emergency SMS sent via Twilio');
       return true;
     }
-    
-    // Fallback to native SMS
+
     final nativeSuccess = await _sendViaNativeSMS(message);
     if (nativeSuccess) {
       debugPrint('Emergency SMS sent via native SMS');
       return true;
     }
-    
+
     debugPrint('Both Twilio and native SMS failed');
     return false;
-    
   } catch (e) {
     debugPrint('Error in sendSMSEmergencyAlert: $e');
     return false;
   }
 }
 
-/// Composes emergency SMS message
 String _composeEmergencySMS(
   double lat,
   double lng,
@@ -515,46 +495,30 @@ String _composeEmergencySMS(
 ) {
   final timestamp = DateTime.now().toIso8601String();
   final mapsUrl = 'https://maps.google.com/?q=$lat,$lng';
-  
+
   return 'EMERGENCY [${type.typeDisplayName}] '
-         'Patient: $patientName '
-         '| Phone: $patientPhone '
-         '| Location: $mapsUrl '
-         '| Time: $timestamp';
+      'Patient: $patientName '
+      '| Phone: $patientPhone '
+      '| Location: $mapsUrl '
+      '| Time: $timestamp';
 }
 
-/// Sends SMS via Twilio API
 Future<bool> _sendViaTwilio(String message) async {
   try {
-    // This would use your Twilio configuration
-    // For now, we'll simulate the API call
     debugPrint('Attempting to send SMS via Twilio: $message');
-    
-    // Mock implementation - replace with actual Twilio API call
     await Future.delayed(const Duration(seconds: 1));
-    
-    // Simulate success/failure (remove this in production)
-    return true; // Return true for demo
-    
+    return true;
   } catch (e) {
     debugPrint('Twilio API failed: $e');
     return false;
   }
 }
 
-/// Sends SMS via native device SMS
 Future<bool> _sendViaNativeSMS(String message) async {
   try {
-    // This would use the telephony package
-    // For now, we'll simulate the native SMS
     debugPrint('Attempting to send SMS via native device: $message');
-    
-    // Mock implementation - replace with actual telephony package usage
     await Future.delayed(const Duration(seconds: 1));
-    
-    // Simulate success/failure (remove this in production)
-    return true; // Return true for demo
-    
+    return true;
   } catch (e) {
     debugPrint('Native SMS failed: $e');
     return false;

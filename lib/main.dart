@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:logger/logger.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import 'package:google_maps_flutter_android/google_maps_flutter_android.dart';
@@ -11,6 +12,9 @@ import 'repositories/emergency_repository.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
 void main() async {
+  var logger = Logger();
+  logger.d("Debug message");
+  logger.e("Error message");
   // Ensure Flutter bindings are initialized
   WidgetsFlutterBinding.ensureInitialized();
 

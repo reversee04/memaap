@@ -12,12 +12,12 @@ import 'package:go_router/go_router.dart';
 import '../router.dart';
 
 /// Service class for handling authentication operations in Flutter
-/// 
+///
 /// Provides high-level authentication methods with secure storage,
 /// state management, and navigation for the Mobile Emergency Medical Assistance App.
 class AuthService {
   static const FlutterSecureStorage _secureStorage = FlutterSecureStorage();
-  
+
   // Storage keys
   static const String _tokenKey = 'auth_token';
   static const String _refreshTokenKey = 'refresh_token';
@@ -26,11 +26,11 @@ class AuthService {
   static const String _userCacheKey = 'user_cache';
 
   /// Logs in a user with phone and password
-  /// 
+  ///
   /// [context] - BuildContext for navigation and showing snack bars
   /// [phone] - User's phone number
   /// [password] - User's password
-  /// 
+  ///
   /// Handles validation, API call, secure storage, and navigation.
   /// Shows loading state and error messages appropriately.
   static Future<void> loginUser(
@@ -39,7 +39,7 @@ class AuthService {
     String password,
   ) async {
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
-    
+
     try {
       // Set loading state
       authProvider.setLoading(true);
@@ -82,13 +82,15 @@ class AuthService {
 
       // Navigate to appropriate dashboard based on role
       _navigateToDashboard(context, user.role);
-
     } on NetworkException catch (e) {
       authProvider.setError('Network error: ${e.message}');
-      _showErrorSnackBar(context, 'Network error: Please check your internet connection');
+      _showErrorSnackBar(
+        context,
+        'Network error: Please check your internet connection',
+      );
     } on AuthException catch (e) {
       authProvider.setError(e.message);
-      
+
       // Handle invalid credentials separately
       if (e.statusCode == 401) {
         _showErrorSnackBar(context, 'Invalid phone number or password');
@@ -97,7 +99,10 @@ class AuthService {
       }
     } catch (e) {
       authProvider.setError('An unexpected error occurred');
-      _showErrorSnackBar(context, 'An unexpected error occurred. Please try again.');
+      _showErrorSnackBar(
+        context,
+        'An unexpected error occurred. Please try again.',
+      );
     } finally {
       authProvider.setLoading(false);
     }
@@ -127,8 +132,8 @@ class AuthService {
 
       // Call backend — returns {user, token, refreshToken}
       final response = await AuthRepository.register(model);
-      final user         = response['user'] as UserModel;
-      final token        = response['token'] as String;
+      final user = response['user'] as UserModel;
+      final token = response['token'] as String;
       final refreshToken = response['refreshToken'] as String;
 
       // Persist JWT + user meta
@@ -141,7 +146,6 @@ class AuthService {
 
       // Navigate to the right dashboard
       _navigateToDashboard(context, user.role);
-
     } on DuplicatePhoneException catch (e) {
       authProvider.setError(e.message);
       _showErrorSnackBar(context, 'This phone number is already registered');
@@ -150,7 +154,10 @@ class AuthService {
       _showErrorSnackBar(context, e.message);
     } on NetworkException catch (e) {
       authProvider.setError('Network error: ${e.message}');
-      _showErrorSnackBar(context, 'Network error: Please check your internet connection');
+      _showErrorSnackBar(
+        context,
+        'Network error: Please check your internet connection',
+      );
     } catch (e) {
       authProvider.setError('Registration failed');
       _showErrorSnackBar(context, 'Registration failed. Please try again.');
@@ -160,11 +167,11 @@ class AuthService {
   }
 
   /// Logs out the current user and clears stored data
-  /// 
+  ///
   /// [context] - BuildContext for navigation
   static Future<void> logout(BuildContext context) async {
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
-    
+
     try {
       final token = await _secureStorage.read(key: _tokenKey);
       final userId = await _secureStorage.read(key: _userIdKey);
@@ -183,7 +190,6 @@ class AuthService {
 
       // Navigate to login screen
       _navigateToLogin(context);
-
     } catch (e) {
       // Even if API call fails, clear local data
       await _clearAuthData();
@@ -194,12 +200,12 @@ class AuthService {
   }
 
   /// Checks if user is authenticated and has valid token
-  /// 
+  ///
   /// Returns true if user is authenticated, false otherwise
   static Future<bool> isAuthenticated() async {
     try {
       final token = await _secureStorage.read(key: _tokenKey);
-      
+
       if (token == null) return false;
 
       // Verify token with backend
@@ -213,7 +219,7 @@ class AuthService {
   }
 
   /// Gets the current authenticated user by calling the backend profile endpoint.
-  /// 
+  ///
   /// Returns UserModel if authenticated, null otherwise.
   static Future<UserModel?> getCurrentUser() async {
     try {
@@ -231,10 +237,13 @@ class AuthService {
       ApiClient.setAuthToken(token);
 
       // Fetch live profile from backend
-      final response = await ApiClient.get('/api/users/profile');
+      final response = await ApiClient.get('/users/profile');
       final user = UserModel.fromJson(response['user']);
       // Update cache with fresh data
-      await _secureStorage.write(key: _userCacheKey, value: jsonEncode(user.toJson()));
+      await _secureStorage.write(
+        key: _userCacheKey,
+        value: jsonEncode(user.toJson()),
+      );
       return user;
     } on ApiException catch (e) {
       // 401 → token is expired/invalid; clear local data
@@ -260,12 +269,12 @@ class AuthService {
   }
 
   /// Refreshes the access token using the stored refresh token
-  /// 
+  ///
   /// Returns true if refresh was successful, false otherwise
   static Future<bool> refreshToken() async {
     try {
       final refreshToken = await _secureStorage.read(key: _refreshTokenKey);
-      
+
       if (refreshToken == null) return false;
 
       final response = await AuthRepository.refreshToken(refreshToken);
@@ -299,7 +308,10 @@ class AuthService {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('user_role', user.role);
     // Store entire user JSON for offline access
-    await _secureStorage.write(key: _userCacheKey, value: jsonEncode(user.toJson()));
+    await _secureStorage.write(
+      key: _userCacheKey,
+      value: jsonEncode(user.toJson()),
+    );
   }
 
   /// Clears all authentication data
@@ -364,8 +376,8 @@ class AuthService {
   /// Checks password strength
   static bool _isStrongPassword(String password) {
     return password.contains(RegExp(r'[A-Z]')) && // Uppercase
-           password.contains(RegExp(r'[a-z]')) && // Lowercase
-           password.contains(RegExp(r'[0-9]'));   // Number
+        password.contains(RegExp(r'[a-z]')) && // Lowercase
+        password.contains(RegExp(r'[0-9]')); // Number
   }
 
   /// Shows error snack bar
@@ -392,7 +404,11 @@ class AuthService {
   }
 
   /// Navigates to OTP verification screen
-  static void _navigateToOTPVerification(BuildContext context, String phone, String userId) {
+  static void _navigateToOTPVerification(
+    BuildContext context,
+    String phone,
+    String userId,
+  ) {
     // This would navigate to your OTP verification screen
     // context.go('/otp-verification', extra: {'phone': phone, 'userId': userId});
     // For now, we'll just print the navigation

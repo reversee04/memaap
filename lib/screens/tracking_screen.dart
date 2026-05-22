@@ -1,44 +1,40 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
-import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/emergency_request_model.dart';
-import '../models/user_model.dart';
 import '../services/emergency_tracking_service.dart';
 import '../services/emergency_service.dart';
-import '../services/location_service.dart';
 import '../controllers/map_controller.dart';
 import '../widgets/status_stepper.dart';
 
 /// Patient-facing tracking screen after submitting emergency request
-/// 
+///
 /// Shows animated status stepper, live map with responder tracking,
 /// ETA countdown, and options to cancel or call responder.
 class TrackingScreen extends StatefulWidget {
   final String requestId;
 
-  const TrackingScreen({
-    Key? key,
-    required this.requestId,
-  }) : super(key: key);
+  const TrackingScreen({Key? key, required this.requestId}) : super(key: key);
 
   @override
   State<TrackingScreen> createState() => _TrackingScreenState();
 }
 
-class _TrackingScreenState extends State<TrackingScreen> 
+class _TrackingScreenState extends State<TrackingScreen>
     with TickerProviderStateMixin {
   EmergencyRequest? _currentRequest;
   StreamSubscription<EmergencyRequest>? _trackingSubscription;
   MapController? _mapController;
   bool _isReconnecting = false;
+  String? _trackingError;
   Timer? _etaTimer;
-  Duration? _remainingTime;
 
   @override
   void initState() {
-    debugPrint('[TrackingScreen] initState called with requestId: ${widget.requestId}');
+    debugPrint(
+      '[TrackingScreen] initState called with requestId: ${widget.requestId}',
+    );
     if (widget.requestId.isEmpty) {
       debugPrint('[TrackingScreen] ERROR: requestId is empty!');
     }
@@ -58,8 +54,8 @@ class _TrackingScreenState extends State<TrackingScreen>
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Emergency Tracking'),
-        backgroundColor: Colors.red,
+        title: const Text('Patient Tracking'),
+        backgroundColor: const Color(0xFF0033CC),
         foregroundColor: Colors.white,
         actions: [
           if (_currentRequest?.status == EmergencyStatus.pending)
@@ -71,7 +67,9 @@ class _TrackingScreenState extends State<TrackingScreen>
         ],
       ),
       body: _currentRequest == null
-          ? _buildLoadingState()
+          ? _trackingError == null
+                ? _buildLoadingState()
+                : _buildErrorState()
           : _buildTrackingContent(),
       floatingActionButton: _buildFloatingActionButton(),
     );
@@ -80,11 +78,9 @@ class _TrackingScreenState extends State<TrackingScreen>
   /// Starts tracking of emergency request
   Future<void> _startTracking() async {
     try {
-      _trackingSubscription = EmergencyTrackingService.trackEmergencyRequest(widget.requestId)
-          .listen(
-            _onRequestUpdate,
-            onError: _onTrackingError,
-          );
+      _trackingSubscription = EmergencyTrackingService.trackEmergencyRequest(
+        widget.requestId,
+      ).listen(_onRequestUpdate, onError: _onTrackingError);
     } catch (e) {
       debugPrint('Failed to start tracking: $e');
     }
@@ -95,6 +91,7 @@ class _TrackingScreenState extends State<TrackingScreen>
     setState(() {
       _currentRequest = request;
       _isReconnecting = false;
+      _trackingError = null;
     });
 
     // Update map if available
@@ -116,6 +113,9 @@ class _TrackingScreenState extends State<TrackingScreen>
       });
     } else {
       debugPrint('Tracking error: $error');
+      setState(() {
+        _trackingError = error.toString();
+      });
     }
   }
 
@@ -126,9 +126,35 @@ class _TrackingScreenState extends State<TrackingScreen>
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           CircularProgressIndicator(),
-          SizedBox(height:16),
+          SizedBox(height: 16),
           Text('Loading emergency tracking...'),
         ],
+      ),
+    );
+  }
+
+  Widget _buildErrorState() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.error_outline, color: Colors.red, size: 48),
+            const SizedBox(height: 16),
+            const Text(
+              'Unable to load emergency tracking',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _trackingError ?? 'Please try again.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.grey[700]),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -141,25 +167,22 @@ class _TrackingScreenState extends State<TrackingScreen>
       children: [
         // Reconnecting banner
         if (_isReconnecting) _buildReconnectingBanner(),
-        
+
         // Status stepper
         Expanded(
-          flex: 2,
+          flex: 4,
           child: Container(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(5),
             child: StatusStepper(
               currentStatus: _currentRequest!.status,
               isAnimated: true,
             ),
           ),
         ),
-        
+
         // Map view
-        Expanded(
-          flex: 5,
-          child: _buildMapView(),
-        ),
-        
+        Expanded(flex: 5, child: _buildMapView()),
+
         // Bottom sheet with responder info
         _buildBottomSheet(),
       ],
@@ -178,10 +201,7 @@ class _TrackingScreenState extends State<TrackingScreen>
           const SizedBox(width: 8),
           const Text(
             'Reconnecting to tracking service...',
-            style: TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.bold,
-            ),
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
           ),
           const Spacer(),
           const SizedBox(
@@ -218,7 +238,10 @@ class _TrackingScreenState extends State<TrackingScreen>
           children: [
             GoogleMap(
               initialCameraPosition: CameraPosition(
-                target: LatLng(_currentRequest!.latitude, _currentRequest!.longitude),
+                target: LatLng(
+                  _currentRequest!.latitude,
+                  _currentRequest!.longitude,
+                ),
                 zoom: 15.0,
               ),
               markers: _mapController?.markers ?? {},
@@ -237,7 +260,7 @@ class _TrackingScreenState extends State<TrackingScreen>
                 _updateMapMarkers(_currentRequest!);
               },
             ),
-            
+
             // ETA countdown overlay
             if (_currentRequest?.status == EmergencyStatus.inProgress)
               Positioned(
@@ -266,11 +289,7 @@ class _TrackingScreenState extends State<TrackingScreen>
       ),
       child: Row(
         children: [
-          const Icon(
-            Icons.access_time,
-            color: Colors.white,
-            size: 20,
-          ),
+          const Icon(Icons.access_time, color: Colors.white, size: 20),
           const SizedBox(width: 8),
           Text(
             'ETA: ${_currentRequest!.estimatedArrivalText}',
@@ -339,7 +358,7 @@ class _TrackingScreenState extends State<TrackingScreen>
             ),
             const SizedBox(height: 16),
           ],
-          
+
           // Hospital information
           if (_currentRequest!.hasResponder) ...[
             Row(
@@ -348,16 +367,13 @@ class _TrackingScreenState extends State<TrackingScreen>
                 const SizedBox(width: 8),
                 Text(
                   'Assigned Hospital: Central Hospital',
-                  style: const TextStyle(
-                    fontSize: 14,
-                    color: Colors.grey,
-                  ),
+                  style: const TextStyle(fontSize: 14, color: Colors.grey),
                 ),
               ],
             ),
             const SizedBox(height: 16),
           ],
-          
+
           // Contact information
           if (_currentRequest!.hasResponder) ...[
             Row(
@@ -388,7 +404,7 @@ class _TrackingScreenState extends State<TrackingScreen>
               ],
             ),
           ],
-          
+
           // Cancel button (only for pending requests)
           if (_currentRequest!.status == EmergencyStatus.pending) ...[
             const SizedBox(height: 16),
@@ -452,7 +468,10 @@ class _TrackingScreenState extends State<TrackingScreen>
 
         if (hasRealLocation) {
           // Use the actual GPS position broadcast by the responder
-          responderLatLng = LatLng(request.responderLat!, request.responderLng!);
+          responderLatLng = LatLng(
+            request.responderLat!,
+            request.responderLng!,
+          );
         } else {
           // Fallback: show a placeholder marker near the patient until
           // the responder starts broadcasting their location
@@ -526,7 +545,7 @@ class _TrackingScreenState extends State<TrackingScreen>
     // In a real implementation, you'd get responder's phone number
     // For now, we'll use a mock number
     final phoneNumber = '+2651234567';
-    
+
     final uri = Uri.parse('tel:$phoneNumber');
     if (await canLaunchUrl(uri)) {
       await launchUrl(uri);
@@ -541,7 +560,7 @@ class _TrackingScreenState extends State<TrackingScreen>
 
     final locationUrl = _currentRequest!.mapsUrl;
     final uri = Uri.parse(locationUrl);
-    
+
     if (await canLaunchUrl(uri)) {
       await launchUrl(uri);
     } else {
@@ -579,7 +598,10 @@ class _TrackingScreenState extends State<TrackingScreen>
     );
 
     if (confirmed == true) {
-      await EmergencyService.cancelEmergencyRequest(context, _currentRequest!.id);
+      await EmergencyService.cancelEmergencyRequest(
+        context,
+        _currentRequest!.id,
+      );
     }
   }
 

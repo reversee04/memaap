@@ -102,10 +102,7 @@ router.get('/pending', requireAuth, (_req: Request, res: Response): void => {
 });
 
 // ── GET /api/emergency/user/:userId ─────────────────────────────────────────
-router.get(
-  '/user/:userId',
-  requireAuth,
-  (req: Request, res: Response): void => {
+router.get<{ userId: string }>('/user/:userId', requireAuth, (req: Request<{ userId: string }>, res: Response): void => {
     try {
       const { status } = req.query as { status?: string };
 
@@ -127,10 +124,7 @@ router.get(
 );
 
 // ── GET /api/emergency/responder/:responderId ────────────────────────────────
-router.get(
-  '/responder/:responderId',
-  requireAuth,
-  (req: Request, res: Response): void => {
+router.get<{ responderId: string }>('/responder/:responderId', requireAuth, (req: Request<{ responderId: string }>, res: Response): void => {
     try {
       const emergencies =
         EmergencyRequestRepository.findByResponder(
@@ -149,7 +143,7 @@ router.get(
 );
 
 // ── GET /api/emergency/:id ───────────────────────────────────────────────────
-router.get('/:id', requireAuth, (req: Request, res: Response): void => {
+router.get<{ id: string }>('/:id', requireAuth, (req: Request<{ id: string }>, res: Response): void => {
   try {
     const emergency =
       EmergencyRequestRepository.findById(req.params.id);
@@ -172,7 +166,7 @@ router.get('/:id', requireAuth, (req: Request, res: Response): void => {
 });
 
 // ── PUT /api/emergency/:id/accept ────────────────────────────────────────────
-router.put('/:id/accept', requireAuth, (req: Request, res: Response): void => {
+router.put<{ id: string }>('/:id/accept', requireAuth, async (req: Request<{ id: string }>, res: Response): Promise<void> => {
   try {
     const { userId, role } =
       res.locals.user as AuthenticatedUser;
@@ -208,7 +202,7 @@ router.put('/:id/accept', requireAuth, (req: Request, res: Response): void => {
 });
 
 // ── PUT /api/emergency/:id/status ────────────────────────────────────────────
-router.put('/:id/status', requireAuth, (req: Request, res: Response): void => {
+router.put<{ id: string }>('/:id/status', requireAuth, (req: Request<{ id: string }>, res: Response): void => {
   try {
     const { status } = req.body;
 
@@ -251,7 +245,7 @@ router.put('/:id/status', requireAuth, (req: Request, res: Response): void => {
 });
 
 // ── DELETE /api/emergency/:id ────────────────────────────────────────────────
-router.delete('/:id', requireAuth, (req: Request, res: Response): void => {
+router.delete<{ id: string }>('/:id', requireAuth, (req: Request<{ id: string }>, res: Response): void => {
   try {
     const emergency =
       EmergencyRequestRepository.updateStatus(

@@ -64,6 +64,7 @@ dependencies:
   uuid: ^4.4.2
   google_maps_flutter_android: ^2.19.8
   google_maps_flutter_platform_interface: ^2.15.0
+  logger: ^2.7.0
 
 dev_dependencies:
   flutter_test:
