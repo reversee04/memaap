@@ -10,6 +10,7 @@ import 'screens/timeline_screen.dart';
 import 'screens/hospitals_screen.dart';
 import 'screens/profile_screen.dart';
 import 'screens/responder_dashboard.dart';
+import 'screens/call_screen.dart';
 import 'widgets/bottom_nav_bar.dart';
 
 final _rootNavigatorKey = GlobalKey<NavigatorState>();
@@ -33,6 +34,14 @@ final goRouter = GoRouter(
     GoRoute(
       path: '/responder',
       builder: (context, state) => const ResponderDashboard(),
+    ),
+    GoRoute(
+      path: '/call',
+      builder: (context, state) {
+        final extra = state.extra as Map<String, dynamic>?;
+        final title = extra?['title']?.toString() ?? 'Emergency Call';
+        return CallScreen(title: title);
+      },
     ),
     StatefulShellRoute.indexedStack(
       builder: (context, state, navigationShell) {

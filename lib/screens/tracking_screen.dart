@@ -3,8 +3,11 @@ import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:provider/provider.dart';
+import 'package:go_router/go_router.dart';
 import '../models/emergency_request_model.dart';
 import '../models/user_model.dart';
+import '../providers/call_provider.dart';
 import '../services/emergency_tracking_service.dart';
 import '../services/emergency_service.dart';
 import '../services/location_service.dart';
@@ -494,18 +497,27 @@ class _TrackingScreenState extends State<TrackingScreen>
 
   /// Calls the responder
   Future<void> _callResponder() async {
-    if (_currentRequest?.hasResponder != true) return;
+    if (_currentRequest?.hasResponder != true || _currentRequest == null) return;
 
-    // In a real implementation, you'd get responder's phone number
-    // For now, we'll use a mock number
-    final phoneNumber = '+2651234567';
-    
-    final uri = Uri.parse('tel:$phoneNumber');
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri);
-    } else {
-      debugPrint('Could not launch phone dialer');
+    final callProvider = context.read<CallProvider>();
+    await callProvider.initialize();
+    await callProvider.startCall(_currentRequest!.id);
+
+    if (!mounted) return;
+
+    if (callProvider.state == CallUiState.error) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(callProvider.errorMessage ?? 'Failed to start call'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
     }
+
+    context.push('/call', extra: {
+      'title': 'Call with Responder',
+    });
   }
 
   /// Shares current location

@@ -95,6 +95,30 @@ db.exec(`
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
+  -- Call sessions: one emergency caller <-> responder session at a time (MVP)
+  CREATE TABLE IF NOT EXISTS call_sessions (
+    id             TEXT PRIMARY KEY,
+    emergency_id   TEXT NOT NULL REFERENCES emergency_requests(id),
+    caller_user_id TEXT NOT NULL REFERENCES users(id),
+    callee_user_id TEXT NOT NULL REFERENCES users(id),
+    status         TEXT NOT NULL DEFAULT 'ringing'
+                   CHECK (status IN ('ringing','active','ended','missed','rejected','failed')),
+    started_at     TEXT NOT NULL DEFAULT (datetime('now')),
+    answered_at    TEXT,
+    ended_at       TEXT,
+    end_reason     TEXT
+                   CHECK (end_reason IN ('hangup','timeout','network_error','rejected') OR end_reason IS NULL)
+  );
+
+  -- Call events: optional event timeline for debugging and auditability
+  CREATE TABLE IF NOT EXISTS call_events (
+    id              TEXT PRIMARY KEY,
+    call_session_id TEXT NOT NULL REFERENCES call_sessions(id) ON DELETE CASCADE,
+    event_type      TEXT NOT NULL,
+    event_payload   TEXT,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
   -- Refresh tokens: long-lived tokens for silent re-auth
   CREATE TABLE IF NOT EXISTS refresh_tokens (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -134,6 +158,15 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_notifications_user
     ON notifications(user_id, is_read);
+
+  CREATE INDEX IF NOT EXISTS idx_call_sessions_emergency
+    ON call_sessions(emergency_id, started_at DESC);
+
+  CREATE INDEX IF NOT EXISTS idx_call_sessions_status
+    ON call_sessions(status);
+
+  CREATE INDEX IF NOT EXISTS idx_call_events_session
+    ON call_events(call_session_id, created_at DESC);
 
   CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user
     ON refresh_tokens(user_id);

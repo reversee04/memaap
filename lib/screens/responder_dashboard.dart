@@ -2,8 +2,11 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:go_router/go_router.dart';
+import 'package:provider/provider.dart';
 import '../models/emergency_request_model.dart';
 import '../models/user_model.dart';
+import '../providers/call_provider.dart';
 import '../repositories/emergency_repository.dart';
 import '../services/location_service.dart';
 import '../services/notification_service.dart';
@@ -174,6 +177,9 @@ class _ResponderDashboardState extends State<ResponderDashboard>
   late TabController _tabController;
   late ResponderDashboardCubit _cubit;
   int _currentIndex = 0;
+  CallProvider? _callProvider;
+  bool _callListenerAttached = false;
+  bool _isCallDialogOpen = false;
 
   @override
   void initState() {
@@ -184,7 +190,20 @@ class _ResponderDashboardState extends State<ResponderDashboard>
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+
+    if (_callListenerAttached) return;
+
+    _callProvider = context.read<CallProvider>();
+    _callProvider?.initialize();
+    _callProvider?.addListener(_onCallProviderChanged);
+    _callListenerAttached = true;
+  }
+
+  @override
   void dispose() {
+    _callProvider?.removeListener(_onCallProviderChanged);
     _tabController.dispose();
     super.dispose();
   }
@@ -590,6 +609,18 @@ class _ResponderDashboardState extends State<ResponderDashboard>
                   const SizedBox(height: 24),
                   const Divider(),
                   const SizedBox(height: 16),
+                  if (request.status == EmergencyStatus.accepted ||
+                      request.status == EmergencyStatus.inProgress) ...[
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: () => _startResponderCall(request),
+                        icon: const Icon(Icons.phone),
+                        label: const Text('Call Patient'),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                  ],
                   const Text(
                     'Update Alert Status',
                     style: TextStyle(
@@ -684,5 +715,81 @@ class _ResponderDashboardState extends State<ResponderDashboard>
         ),
       );
     }
+  }
+
+  void _onCallProviderChanged() {
+    if (!mounted || _isCallDialogOpen) return;
+
+    final provider = _callProvider;
+    if (provider == null) return;
+
+    if (provider.state == CallUiState.incomingRinging &&
+        provider.incomingSession != null) {
+      _showIncomingCallDialog();
+    }
+  }
+
+  Future<void> _showIncomingCallDialog() async {
+    final provider = _callProvider;
+    if (provider == null || provider.incomingSession == null) return;
+
+    _isCallDialogOpen = true;
+
+    final action = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Incoming Emergency Call'),
+          content: const Text('A caller from your assigned emergency needs to speak with you.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop('reject'),
+              child: const Text('Reject'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(context).pop('accept'),
+              child: const Text('Accept'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (!mounted) return;
+
+    if (action == 'accept') {
+      await provider.acceptIncomingCall();
+      if (mounted) {
+        context.push('/call', extra: {'title': 'Call with Requester'});
+      }
+    } else {
+      await provider.rejectIncomingCall();
+      provider.clearIncoming();
+    }
+
+    _isCallDialogOpen = false;
+  }
+
+  Future<void> _startResponderCall(EmergencyRequest request) async {
+    final provider = _callProvider;
+    if (provider == null) return;
+
+    await provider.initialize();
+    await provider.startCall(request.id);
+
+    if (!mounted) return;
+
+    if (provider.state == CallUiState.error) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(provider.errorMessage ?? 'Failed to start call'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    context.push('/call', extra: {'title': 'Call with Requester'});
   }
 }

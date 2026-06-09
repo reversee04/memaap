@@ -6,6 +6,7 @@ import 'package:google_maps_flutter_platform_interface/google_maps_flutter_platf
 import 'config/app_config.dart';
 import 'providers/emergency_provider.dart';
 import 'providers/auth_provider.dart';
+import 'providers/call_provider.dart';
 import 'router.dart';
 
 void main() async {
@@ -28,6 +29,7 @@ void main() async {
       providers: [
         ChangeNotifierProvider(create: (_) => EmergencyProvider()),
         ChangeNotifierProvider(create: (_) => AuthProvider()),
+        ChangeNotifierProvider(create: (_) => CallProvider()),
       ],
       child: const MyApp(),
     ),
