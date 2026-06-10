@@ -55,6 +55,8 @@ class NavigationService {
       'Enable Routes API for this Google Cloud project and allow this API key to use it. '
       'A Places-only key is not enough for route calculation.';
 
+  static const Duration _routesDepartureLeadTime = Duration(minutes: 1);
+
   static Future<List<RouteOption>> getRouteOptions({
     required LatLng origin,
     required LatLng destination,
@@ -98,7 +100,10 @@ class NavigationService {
       },
       'languageCode': 'en-US',
       'units': 'METRIC',
-      'departureTime': DateTime.now().toUtc().toIso8601String(),
+      'departureTime': DateTime.now()
+          .toUtc()
+          .add(_routesDepartureLeadTime)
+          .toIso8601String(),
     };
 
     final response = await http.post(
