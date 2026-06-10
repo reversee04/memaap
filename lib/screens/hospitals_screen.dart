@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import '../models/hospital_model.dart';
 import '../services/hospital_service.dart';
 import '../services/navigation_service.dart';
+import '../services/phone_call_service.dart';
 
 class HospitalsScreen extends StatefulWidget {
   const HospitalsScreen({super.key});
@@ -17,21 +17,7 @@ class _HospitalsScreenState extends State<HospitalsScreen> {
   List<HospitalModel> _hospitals = [];
   bool _isLoading = true;
 
-  String? _normalizePhoneForDialer(String? rawPhone) {
-    if (rawPhone == null) return null;
 
-    final trimmed = rawPhone.trim();
-    if (trimmed.isEmpty) return null;
-
-    final cleaned = trimmed.replaceAll(RegExp(r'[^0-9+]'), '');
-    if (cleaned.isEmpty) return null;
-
-    final normalized = cleaned.startsWith('+')
-        ? '+${cleaned.substring(1).replaceAll('+', '')}'
-        : cleaned.replaceAll('+', '');
-
-    return normalized.isEmpty ? null : normalized;
-  }
 
   @override
   void initState() {
@@ -88,8 +74,7 @@ class _HospitalsScreenState extends State<HospitalsScreen> {
   }
 
   Future<void> _callHospital(String? phone) async {
-    final normalizedPhone = _normalizePhoneForDialer(phone);
-    if (normalizedPhone == null) {
+    if (phone == null || phone.trim().isEmpty) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Hospital phone number is not available')),
@@ -97,21 +82,7 @@ class _HospitalsScreenState extends State<HospitalsScreen> {
       }
       return;
     }
-
-    final Uri launchUri = Uri(
-      scheme: 'tel',
-      path: normalizedPhone,
-    );
-
-    if (await canLaunchUrl(launchUri)) {
-      await launchUrl(launchUri, mode: LaunchMode.externalApplication);
-    } else {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Could not launch dialer')),
-        );
-      }
-    }
+    await PhoneCallService.makePhoneCall(phoneNumber: phone, context: context);
   }
 
   Future<void> _navigateToHospital(HospitalModel hospital) async {
