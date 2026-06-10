@@ -59,12 +59,11 @@ class _TrackingScreenState extends State<TrackingScreen>
         backgroundColor: const Color(0xFF0033CC),
         foregroundColor: Colors.white,
         actions: [
-          if (_currentRequest?.hasResponderPhone == true)
-            IconButton(
-              onPressed: _callResponder,
-              icon: const Icon(Icons.phone),
-              tooltip: 'Call Responder',
-            ),
+          IconButton(
+            onPressed: _callResponder,
+            icon: const Icon(Icons.phone),
+            tooltip: 'Call Responder',
+          ),
           if (_currentRequest?.status == EmergencyStatus.pending)
             IconButton(
               onPressed: _cancelRequest,
@@ -396,9 +395,7 @@ class _TrackingScreenState extends State<TrackingScreen>
               children: [
                 Expanded(
                   child: OutlinedButton.icon(
-                    onPressed: _currentRequest!.hasResponderPhone
-                        ? _callResponder
-                        : null,
+                    onPressed: _callResponder,
                     icon: const Icon(Icons.phone),
                     label: const Text('Call Responder'),
                     style: OutlinedButton.styleFrom(
@@ -446,7 +443,7 @@ class _TrackingScreenState extends State<TrackingScreen>
 
   /// Builds floating action button
   Widget? _buildFloatingActionButton() {
-    if (_currentRequest?.hasResponderPhone != true) return null;
+    if (_currentRequest == null) return null;
 
     return FloatingActionButton.extended(
       onPressed: _callResponder,
