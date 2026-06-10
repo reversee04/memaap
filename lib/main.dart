@@ -72,6 +72,7 @@ class MyApp extends StatelessWidget {
         useMaterial3: true,
         scaffoldBackgroundColor: const Color(0xFFF5F7FA),
       ),
+      debugShowCheckedModeBanner: false,
       routerConfig: goRouter,
     );
   }

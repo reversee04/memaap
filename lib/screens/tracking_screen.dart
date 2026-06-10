@@ -567,7 +567,8 @@ class _TrackingScreenState extends State<TrackingScreen>
     if (cleaned.isEmpty) return null;
 
     final normalized = cleaned.startsWith('+')
-        ? '+${cleaned.substring(1).replaceAll('+', '')}'n        : cleaned.replaceAll('+', '');
+        ? '+${cleaned.substring(1).replaceAll('+', '')}'
+        : cleaned.replaceAll('+', '');
 
     return normalized.isEmpty ? null : normalized;
   }
@@ -576,7 +577,7 @@ class _TrackingScreenState extends State<TrackingScreen>
   Future<void> _callResponder() async {
     final phoneNumber = _currentRequest?.responderPhone;
     final normalizedPhone = _normalizePhoneForDialer(phoneNumber);
-    
+
     if (normalizedPhone == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -586,20 +587,10 @@ class _TrackingScreenState extends State<TrackingScreen>
       return;
     }
 
-    final Uri launchUri = Uri(
-      scheme: 'tel',
-      path: normalizedPhone,
+    await PhoneCallService.makePhoneCall(
+      phoneNumber: normalizedPhone,
+      context: context,
     );
-
-    if (await canLaunchUrl(launchUri)) {
-      await launchUrl(launchUri, mode: LaunchMode.externalApplication);
-    } else {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Could not launch dialer')),
-        );
-      }
-    }
   }
 
   /// Shares current location

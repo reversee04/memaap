@@ -6,6 +6,7 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { AuthService } from '../services/auth.service';
 import { EmergencyRequestRepository } from '../repositories/emergency-request.repository';
 import { AssignmentService } from '../services/assignment.service';
+import { UserRepository } from '../repositories/user.repository';
 import { io } from '../index';
 
 const router = Router();
@@ -298,7 +299,8 @@ router.put<{ id: string }>('/:id/accept', requireAuth, async (req: Request<{ id:
     const emergency =
       EmergencyRequestRepository.assignResponder(
         req.params.id,
-        userId
+        userId,
+        UserRepository.findById(userId)?.phone ?? null,
       );
 
     if (!emergency) {
