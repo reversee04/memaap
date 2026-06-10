@@ -352,12 +352,8 @@ class EmergencyRequest {
       longitude: (json['longitude'] ?? json['lng'] ?? 0.0).toDouble(),
       address: json['address'],
       status: _parseEmergencyStatus(json['status'] ?? json['request_status']),
-      createdAt:
-          DateTime.tryParse(json['createdAt'] ?? json['created_at']) ??
-          DateTime.now(),
-      updatedAt:
-          DateTime.tryParse(json['updatedAt'] ?? json['updated_at']) ??
-          DateTime.now(),
+      createdAt: _parseDateTime(json['createdAt'] ?? json['created_at']),
+      updatedAt: _parseDateTime(json['updatedAt'] ?? json['updated_at']),
       patientName: json['patientName'] ?? json['patient_name'],
       patientPhone: json['patientPhone'] ?? json['patient_phone'],
       responderId: json['responderId']?.toString() ?? json['responder_id'],
@@ -368,9 +364,7 @@ class EmergencyRequest {
           json['estimated_arrival_minutes']?.toInt(),
       isOfflineQueued:
           json['isOfflineQueued'] ?? json['is_offline_queued'] ?? false,
-      syncedAt: json['syncedAt'] != null
-          ? DateTime.tryParse(json['syncedAt'])
-          : null,
+      syncedAt: _parseNullableDateTime(json['syncedAt']),
       medicalHistory:
           json['medicalHistory'] ?? json['medical_history'],
       responderLat: (json['responderLat'] ?? json['responder_lat'])?.toDouble(),
@@ -448,8 +442,8 @@ class EmergencyRequest {
       longitude: (map['longitude'] ?? 0.0).toDouble(),
       address: map['address'],
       status: _parseEmergencyStatus(map['status'] ?? ''),
-      createdAt: DateTime.tryParse(map['created_at'] ?? '') ?? DateTime.now(),
-      updatedAt: DateTime.tryParse(map['updated_at'] ?? '') ?? DateTime.now(),
+      createdAt: _parseDateTime(map['created_at']),
+      updatedAt: _parseDateTime(map['updated_at']),
       patientName: map['patient_name'],
       patientPhone: map['patient_phone'],
       responderId: map['responder_id']?.toString(),
@@ -457,9 +451,7 @@ class EmergencyRequest {
       responderPhone: map['responder_phone'],
       estimatedArrivalMinutes: map['estimated_arrival_minutes']?.toInt(),
       isOfflineQueued: (map['is_offline_queued'] ?? 0) == 1,
-      syncedAt: map['synced_at'] != null
-          ? DateTime.tryParse(map['synced_at'])
-          : null,
+      syncedAt: _parseNullableDateTime(map['synced_at']),
       medicalHistory: map['medical_history'],
       responderLat: (map['responder_lat'] as num?)?.toDouble(),
       responderLng: (map['responder_lng'] as num?)?.toDouble(),
@@ -520,6 +512,44 @@ class EmergencyRequest {
       default:
         return EmergencyStatus.pending;
     }
+  }
+
+  static DateTime _parseDateTime(dynamic raw) {
+    if (raw == null) return DateTime.now();
+
+    final value = raw.toString().trim();
+    if (value.isEmpty) return DateTime.now();
+
+    final sqliteUtcPattern = RegExp(r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$');
+    if (sqliteUtcPattern.hasMatch(value)) {
+      final sqliteParsed = DateTime.tryParse(value.replaceFirst(' ', 'T') + 'Z');
+      if (sqliteParsed != null) {
+        return sqliteParsed.toLocal();
+      }
+    }
+
+    final parsed = DateTime.tryParse(value);
+    if (parsed == null) return DateTime.now();
+    return parsed.isUtc ? parsed.toLocal() : parsed;
+  }
+
+  static DateTime? _parseNullableDateTime(dynamic raw) {
+    if (raw == null) return null;
+
+    final value = raw.toString().trim();
+    if (value.isEmpty) return null;
+
+    final sqliteUtcPattern = RegExp(r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$');
+    if (sqliteUtcPattern.hasMatch(value)) {
+      final sqliteParsed = DateTime.tryParse(value.replaceFirst(' ', 'T') + 'Z');
+      if (sqliteParsed != null) {
+        return sqliteParsed.toLocal();
+      }
+    }
+
+    final parsed = DateTime.tryParse(value);
+    if (parsed == null) return null;
+    return parsed.isUtc ? parsed.toLocal() : parsed;
   }
 
   // ── Computed properties ────────────────────────────────────────────────────
@@ -595,7 +625,7 @@ class EmergencyRequest {
     final now = DateTime.now();
     final difference = now.difference(createdAt);
 
-    if (difference.inMinutes < 1) {
+    if (difference.isNegative || difference.inMinutes < 1) {
       return 'Just now';
     } else if (difference.inMinutes < 60) {
       return '${difference.inMinutes} min ago';
@@ -604,6 +634,17 @@ class EmergencyRequest {
     } else {
       return '${difference.inDays}d ago';
     }
+  }
+
+  /// Gets an exact local timestamp for when the request was created.
+  String get createdAtTimestamp {
+    final local = createdAt.toLocal();
+    final day = local.day.toString().padLeft(2, '0');
+    final month = local.month.toString().padLeft(2, '0');
+    final year = local.year;
+    final hour = local.hour.toString().padLeft(2, '0');
+    final minute = local.minute.toString().padLeft(2, '0');
+    return '$day/$month/$year $hour:$minute';
   }
 
   @override

@@ -48,17 +48,41 @@ router.get('/profile', requireAuth, (req: Request, res: Response) => {
 
 router.put('/profile', requireAuth, (req: Request, res: Response) => {
   const { userId } = res.locals.user;
-  const { name, email } = req.body;
+  const { name, email, phone } = req.body;
 
-  if (!name && !email) {
-    return res.status(400).json({ message: 'Provide at least name or email' });
+  if (!name && !email && !phone) {
+    return res.status(400).json({ message: 'Provide at least one field to update' });
+  }
+
+  const trimmedPhone = typeof phone === 'string' ? phone.trim() : '';
+  if (trimmedPhone) {
+    const existing = db.prepare(
+      'SELECT id FROM users WHERE phone = ? AND id != ?'
+    ).get(trimmedPhone, userId) as any;
+
+    if (existing) {
+      return res.status(409).json({ message: 'Phone number already in use' });
+    }
   }
 
   const sets: string[] = ["updated_at = datetime('now')"];
   const vals: any[] = [];
 
-  if (name)  { sets.push('name = ?');  vals.push(name.trim());  }
-  if (email) { sets.push('email = ?'); vals.push(email.trim()); }
+  if (name) {
+    sets.push('name = ?');
+    vals.push(name.trim());
+  }
+
+  if (email) {
+    sets.push('email = ?');
+    vals.push(email.trim());
+  }
+
+  if (trimmedPhone) {
+    sets.push('phone = ?');
+    vals.push(trimmedPhone);
+  }
+
   vals.push(userId);
 
   db.prepare(`UPDATE users SET ${sets.join(', ')} WHERE id = ?`).run(...vals);

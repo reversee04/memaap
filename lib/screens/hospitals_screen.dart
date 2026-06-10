@@ -17,6 +17,22 @@ class _HospitalsScreenState extends State<HospitalsScreen> {
   List<HospitalModel> _hospitals = [];
   bool _isLoading = true;
 
+  String? _normalizePhoneForDialer(String? rawPhone) {
+    if (rawPhone == null) return null;
+
+    final trimmed = rawPhone.trim();
+    if (trimmed.isEmpty) return null;
+
+    final cleaned = trimmed.replaceAll(RegExp(r'[^0-9+]'), '');
+    if (cleaned.isEmpty) return null;
+
+    final normalized = cleaned.startsWith('+')
+        ? '+${cleaned.substring(1).replaceAll('+', '')}'
+        : cleaned.replaceAll('+', '');
+
+    return normalized.isEmpty ? null : normalized;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -72,13 +88,23 @@ class _HospitalsScreenState extends State<HospitalsScreen> {
   }
 
   Future<void> _callHospital(String? phone) async {
-    if (phone == null || phone.isEmpty) return;
+    final normalizedPhone = _normalizePhoneForDialer(phone);
+    if (normalizedPhone == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Hospital phone number is not available')),
+        );
+      }
+      return;
+    }
+
     final Uri launchUri = Uri(
       scheme: 'tel',
-      path: phone,
+      path: normalizedPhone,
     );
+
     if (await canLaunchUrl(launchUri)) {
-      await launchUrl(launchUri);
+      await launchUrl(launchUri, mode: LaunchMode.externalApplication);
     } else {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

@@ -268,6 +268,44 @@ class AuthService {
     }
   }
 
+  /// Updates profile details for the current authenticated user.
+  static Future<UserModel> updateProfile({
+    required String name,
+    String? email,
+    String? phone,
+  }) async {
+    final token = await _secureStorage.read(key: _tokenKey);
+    if (token == null) {
+      throw AuthException('You are not authenticated', 401);
+    }
+
+    ApiClient.setAuthToken(token);
+
+    final payload = <String, dynamic>{'name': name.trim()};
+    if (email != null) {
+      final trimmed = email.trim();
+      if (trimmed.isNotEmpty) {
+        payload['email'] = trimmed;
+      }
+    }
+    if (phone != null) {
+      final trimmed = phone.trim();
+      if (trimmed.isNotEmpty) {
+        payload['phone'] = trimmed;
+      }
+    }
+
+    final response = await ApiClient.put('/users/profile', data: payload);
+    final updatedUser = UserModel.fromJson(response['user']);
+
+    await _secureStorage.write(
+      key: _userCacheKey,
+      value: jsonEncode(updatedUser.toJson()),
+    );
+
+    return updatedUser;
+  }
+
   /// Refreshes the access token using the stored refresh token
   ///
   /// Returns true if refresh was successful, false otherwise
