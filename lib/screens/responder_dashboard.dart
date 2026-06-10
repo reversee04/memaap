@@ -197,6 +197,18 @@ class ResponderDashboardCubit extends Cubit<ResponderDashboardState> {
     }
   }
 
+  /// Applies a single request update immediately so the UI does not wait for
+  /// polling or socket round-trips before reflecting a responder action.
+  void applyRequestUpdate(EmergencyRequest updatedRequest) {
+    final merged = <String, EmergencyRequest>{
+      for (final request in state.requests) request.id: request,
+      updatedRequest.id: updatedRequest,
+    }.values.toList()
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
+    emit(state.copyWith(requests: merged, error: null));
+  }
+
   /// Clears any error state
   void clearError() {
     emit(state.copyWith(error: null));
@@ -723,23 +735,31 @@ class _ResponderDashboardState extends State<ResponderDashboard>
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          request.typeDisplayName,
-                          style: TextStyle(
-                            color: severityColor,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 15,
+                        Expanded(
+                          child: Text(
+                            request.typeDisplayName,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: severityColor,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 15,
+                            ),
                           ),
                         ),
-                        Row(
-                          children: [
-                            // Severity badge
-                            _buildSeverityBadge(request.severity),
-                            const SizedBox(width: 6),
-                            _buildStatusBadge(request.status),
-                          ],
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Wrap(
+                            alignment: WrapAlignment.end,
+                            spacing: 6,
+                            runSpacing: 6,
+                            children: [
+                              _buildSeverityBadge(request.severity),
+                              _buildStatusBadge(request.status),
+                            ],
+                          ),
                         ),
                       ],
                     ),
@@ -2115,8 +2135,9 @@ class _ResponderDashboardState extends State<ResponderDashboard>
         request = updated;
       });
 
-      // Refresh list
-      _cubit.refreshRequests();
+      // Update dashboard state immediately, then reconcile with backend state.
+      _cubit.applyRequestUpdate(updated);
+      unawaited(_cubit.refreshRequests());
 
       // Show toast
       if (mounted) {
