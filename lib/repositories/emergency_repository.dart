@@ -7,6 +7,7 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import '../models/emergency_request_model.dart';
 import '../services/api_client.dart';
 import '../config/database_helper.dart';
+import 'package:flutter/foundation.dart';
 
 /// Repository class that manages emergency requests via REST API
 ///
@@ -276,6 +277,18 @@ class EmergencyRepository {
     await _storeRequestLocally(request);
   }
 
+  /// Returns the number of requests currently queued for offline sync.
+  static int getQueuedCount() {
+    try {
+      return _syncBox.length;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  /// Returns whether the device is currently online.
+  static bool get isOnline => _isOnline;
+
   /// Internal helper to store request in local database
   static Future<void> _storeRequestLocally(EmergencyRequest request) async {
     final db = await DatabaseHelper().database;
@@ -391,9 +404,13 @@ class EmergencyRepository {
   /// Cancels an emergency request
   ///
   /// [id] - Emergency request ID
+  /// [reason] - Optional reason for cancellation (logged locally)
   ///
   /// Returns the cancelled EmergencyRequest
-  static Future<EmergencyRequest> cancelRequest(String id) async {
+  static Future<EmergencyRequest> cancelRequest(
+    String id, {
+    String? reason,
+  }) async {
     try {
       if (_isOnline) {
         final response = await ApiClient.delete('/emergency/$id');
@@ -403,6 +420,10 @@ class EmergencyRepository {
 
         // Update local database
         await _updateRequestInDatabase(cancelledRequest);
+
+        if (reason != null) {
+          debugPrint('[EmergencyRepository] Cancel reason for $id: $reason');
+        }
 
         return cancelledRequest;
       } else {
@@ -415,6 +436,12 @@ class EmergencyRepository {
 
           await _updateRequestInDatabase(cancelledRequest);
           await _queueRequestForSync(cancelledRequest, 'cancel');
+
+          if (reason != null) {
+            debugPrint(
+              '[EmergencyRepository] Offline cancel reason for $id: $reason',
+            );
+          }
 
           return cancelledRequest;
         } else {

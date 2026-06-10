@@ -10,6 +10,8 @@ import 'screens/tracking_screen.dart';
 import 'screens/timeline_screen.dart';
 import 'screens/hospitals_screen.dart';
 import 'screens/profile_screen.dart';
+import 'screens/medical_profile_screen.dart';
+import 'screens/emergency_contacts_screen.dart';
 import 'screens/responder_dashboard.dart';
 import 'widgets/bottom_nav_bar.dart';
 
@@ -96,6 +98,16 @@ final goRouter = GoRouter(
             GoRoute(
               path: '/profile',
               builder: (context, state) => const ProfileScreen(),
+              routes: [
+                GoRoute(
+                  path: 'medical',
+                  builder: (context, state) => const MedicalProfileScreen(),
+                ),
+                GoRoute(
+                  path: 'contacts',
+                  builder: (context, state) => const EmergencyContactsScreen(),
+                ),
+              ],
             ),
           ],
         ),

@@ -56,7 +56,7 @@ async function requireAuth(
 // ── POST /api/emergency/create ───────────────────────────────────────────────
 router.post('/create', requireAuth, (req: Request, res: Response): void => {
   try {
-    const { type, description, latitude, longitude, address } = req.body;
+    const { type, description, latitude, longitude, address, severity } = req.body;
 
     const { userId } = res.locals.user as AuthenticatedUser;
 
@@ -74,6 +74,7 @@ router.post('/create', requireAuth, (req: Request, res: Response): void => {
       latitude,
       longitude,
       address,
+      severity: severity || 'urgent',
     });
 
     res.status(201).json({ emergency });

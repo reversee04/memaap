@@ -13,37 +13,82 @@ class EmergencyProvider extends ChangeNotifier {
   String? _errorMessage;
   String? get errorMessage => _errorMessage;
 
-  String _selectedEmergencyType = 'Maternal'; // Default from UI
-  String get selectedEmergencyType => _selectedEmergencyType;
+  // ── Selected emergency type ────────────────────────────────────────────────
+  EmergencyType _selectedType = EmergencyType.other;
+  EmergencyType get selectedType => _selectedType;
 
-  void setEmergencyType(String type) {
-    _selectedEmergencyType = type;
+  /// Legacy string accessor kept for backward compatibility with UI tiles that
+  /// compare against display name strings.
+  String get selectedEmergencyType => _selectedType.typeDisplayName;
+
+  void setEmergencyType(String typeName) {
+    // Try to match a preset by display name first
+    final preset = kQuickEmergencyPresets.where(
+      (p) => p.type.typeDisplayName.toLowerCase() == typeName.toLowerCase(),
+    ).firstOrNull;
+    if (preset != null) {
+      _selectedType = preset.type;
+      _selectedSeverity = preset.severity;
+      _presetDescription = preset.description;
+    } else {
+      _selectedType = EmergencyType.other;
+    }
     notifyListeners();
   }
 
+  // ── Quick preset selection ─────────────────────────────────────────────────
+  void selectPreset(QuickEmergencyPreset preset) {
+    _selectedType = preset.type;
+    _selectedSeverity = preset.severity;
+    _presetDescription = preset.description;
+    notifyListeners();
+  }
+
+  void setType(EmergencyType type) {
+    _selectedType = type;
+    notifyListeners();
+  }
+
+  // ── Severity ───────────────────────────────────────────────────────────────
+  EmergencySeverity _selectedSeverity = EmergencySeverity.urgent;
+  EmergencySeverity get selectedSeverity => _selectedSeverity;
+
+  void setSeverity(EmergencySeverity severity) {
+    _selectedSeverity = severity;
+    notifyListeners();
+  }
+
+  // ── Custom description (from preset or free-text) ─────────────────────────
+  String? _presetDescription;
+  String? get presetDescription => _presetDescription;
+
+  void setDescription(String description) {
+    _presetDescription = description;
+    notifyListeners();
+  }
+
+  // ── Trigger ────────────────────────────────────────────────────────────────
+
   Future<bool> triggerEmergency(BuildContext context) async {
-    debugPrint('[EmergencyProvider] triggerEmergency called with type: $_selectedEmergencyType');
+    debugPrint('[EmergencyProvider] triggerEmergency: type=$_selectedType, severity=$_selectedSeverity');
     _setState(EmergencyState.loading);
 
-    // Parse type
-    EmergencyType type = EmergencyType.other;
-    if (_selectedEmergencyType.toLowerCase().contains('maternal')) {
-      type = EmergencyType.medical;
-    }
-    debugPrint('[EmergencyProvider] Parsed type: $type');
+    final success = await EmergencyService.sendEmergencyAlert(
+      context,
+      _selectedType,
+      severity: _selectedSeverity,
+      description: _presetDescription,
+    );
 
-    // Call the service to handle location, network, API, and SMS fallback
-    final success = await EmergencyService.sendEmergencyAlert(context, type);
     debugPrint('[EmergencyProvider] sendEmergencyAlert returned: $success');
 
     if (success) {
       _setState(EmergencyState.success);
-      debugPrint('[EmergencyProvider] Emergency triggered successfully');
       return true;
     } else {
-      _errorMessage = 'Failed to send emergency request. Please try again or call directly.';
+      _errorMessage =
+          'Failed to send emergency request. Please try again or call directly.';
       _setState(EmergencyState.error);
-      debugPrint('[EmergencyProvider] Emergency trigger failed: $_errorMessage');
       return false;
     }
   }
@@ -51,6 +96,9 @@ class EmergencyProvider extends ChangeNotifier {
   void reset() {
     _state = EmergencyState.idle;
     _errorMessage = null;
+    _selectedType = EmergencyType.other;
+    _selectedSeverity = EmergencySeverity.urgent;
+    _presetDescription = null;
     notifyListeners();
   }
 

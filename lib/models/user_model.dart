@@ -1,7 +1,29 @@
+import 'dart:convert';
+
+/// Contact entry stored in emergency contacts list.
+class EmergencyContact {
+  final String name;
+  final String phone;
+
+  const EmergencyContact({required this.name, required this.phone});
+
+  factory EmergencyContact.fromJson(Map<String, dynamic> json) {
+    return EmergencyContact(
+      name: json['name'] ?? '',
+      phone: json['phone'] ?? '',
+    );
+  }
+
+  Map<String, dynamic> toJson() => {'name': name, 'phone': phone};
+
+  @override
+  String toString() => 'EmergencyContact(name: $name, phone: $phone)';
+}
+
 /// Model class for user data
 /// 
 /// Represents a user in the Mobile Emergency Medical Assistance App
-/// with their profile information and role.
+/// with their profile information, medical history, emergency contacts, and role.
 class UserModel {
   final String id;
   final String name;
@@ -11,6 +33,15 @@ class UserModel {
   final DateTime createdAt;
   final DateTime updatedAt;
 
+  // ── Medical profile fields ─────────────────────────────────────────────────
+  final String? bloodType;
+  final List<String> medicalConditions;
+  final List<String> allergies;
+  final List<String> medications;
+
+  // ── Emergency contacts ─────────────────────────────────────────────────────
+  final List<EmergencyContact> emergencyContacts;
+
   UserModel({
     required this.id,
     required this.name,
@@ -19,6 +50,11 @@ class UserModel {
     required this.role,
     required this.createdAt,
     required this.updatedAt,
+    this.bloodType,
+    this.medicalConditions = const [],
+    this.allergies = const [],
+    this.medications = const [],
+    this.emergencyContacts = const [],
   });
 
   /// Creates a copy of this model with updated values
@@ -30,6 +66,11 @@ class UserModel {
     String? role,
     DateTime? createdAt,
     DateTime? updatedAt,
+    String? bloodType,
+    List<String>? medicalConditions,
+    List<String>? allergies,
+    List<String>? medications,
+    List<EmergencyContact>? emergencyContacts,
   }) {
     return UserModel(
       id: id ?? this.id,
@@ -39,19 +80,67 @@ class UserModel {
       role: role ?? this.role,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
+      bloodType: bloodType ?? this.bloodType,
+      medicalConditions: medicalConditions ?? this.medicalConditions,
+      allergies: allergies ?? this.allergies,
+      medications: medications ?? this.medications,
+      emergencyContacts: emergencyContacts ?? this.emergencyContacts,
     );
   }
 
   /// Creates a UserModel from a JSON map
   factory UserModel.fromJson(Map<String, dynamic> json) {
+    List<String> _parseStringList(dynamic value) {
+      if (value == null) return [];
+      if (value is List) return value.cast<String>();
+      if (value is String && value.isNotEmpty) {
+        try {
+          final decoded = jsonDecode(value);
+          if (decoded is List) return decoded.cast<String>();
+        } catch (_) {}
+      }
+      return [];
+    }
+
+    List<EmergencyContact> _parseContacts(dynamic value) {
+      if (value == null) return [];
+      if (value is List) {
+        return value
+            .whereType<Map<String, dynamic>>()
+            .map(EmergencyContact.fromJson)
+            .toList();
+      }
+      if (value is String && value.isNotEmpty) {
+        try {
+          final decoded = jsonDecode(value);
+          if (decoded is List) {
+            return decoded
+                .whereType<Map<String, dynamic>>()
+                .map(EmergencyContact.fromJson)
+                .toList();
+          }
+        } catch (_) {}
+      }
+      return [];
+    }
+
     return UserModel(
       id: json['id'] ?? '',
       name: json['name'] ?? '',
       phone: json['phone'] ?? '',
       email: json['email'],
       role: json['role'] ?? 'patient',
-      createdAt: DateTime.tryParse(json['created_at']) ?? DateTime.now(),
-      updatedAt: DateTime.tryParse(json['updated_at']) ?? DateTime.now(),
+      createdAt: DateTime.tryParse(json['created_at'] ?? '') ?? DateTime.now(),
+      updatedAt: DateTime.tryParse(json['updated_at'] ?? '') ?? DateTime.now(),
+      bloodType: json['blood_type'] ?? json['bloodType'],
+      medicalConditions: _parseStringList(
+        json['medical_conditions'] ?? json['medicalConditions'],
+      ),
+      allergies: _parseStringList(json['allergies']),
+      medications: _parseStringList(json['medications']),
+      emergencyContacts: _parseContacts(
+        json['emergency_contacts'] ?? json['emergencyContacts'],
+      ),
     );
   }
 
@@ -65,7 +154,32 @@ class UserModel {
       'role': role,
       'created_at': createdAt.toIso8601String(),
       'updated_at': updatedAt.toIso8601String(),
+      if (bloodType != null) 'blood_type': bloodType,
+      if (medicalConditions.isNotEmpty)
+        'medical_conditions': medicalConditions,
+      if (allergies.isNotEmpty) 'allergies': allergies,
+      if (medications.isNotEmpty) 'medications': medications,
+      if (emergencyContacts.isNotEmpty)
+        'emergency_contacts':
+            emergencyContacts.map((c) => c.toJson()).toList(),
     };
+  }
+
+  /// Serialises medical history into a compact JSON string for storing in
+  /// emergency request records (to be seen by responders).
+  String? buildMedicalHistoryJson() {
+    final hasMedical = bloodType != null ||
+        medicalConditions.isNotEmpty ||
+        allergies.isNotEmpty ||
+        medications.isNotEmpty;
+    if (!hasMedical) return null;
+
+    return jsonEncode({
+      if (bloodType != null) 'bloodType': bloodType,
+      if (medicalConditions.isNotEmpty) 'conditions': medicalConditions,
+      if (allergies.isNotEmpty) 'allergies': allergies,
+      if (medications.isNotEmpty) 'medications': medications,
+    });
   }
 
   /// Checks if the user is a patient

@@ -1,5 +1,7 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/emergency_request_model.dart';
 import '../models/user_model.dart';
@@ -10,18 +12,22 @@ import '../services/location_service.dart';
 /// Service class for handling emergency alerts.
 class EmergencyService {
   static const String _defaultDescription = 'Emergency assistance requested';
+  static const String _emergencyContactsKey = 'emergency_contacts_json';
+  static const String _medicalProfileKey = 'medical_profile_json';
 
   static bool _isLoadingDialogShowing = false;
   static BuildContext? _loadingDialogContext;
 
   /// Sends an emergency alert with confirmation, GPS location, API creation,
-  /// and SMS fallback.
+  /// and SMS fallback.  Now supports severity levels and attaches medical
+  /// history from the user's stored profile.
   static Future<bool> sendEmergencyAlert(
     BuildContext context,
     EmergencyType type, {
+    EmergencySeverity severity = EmergencySeverity.urgent,
     String? description,
   }) async {
-    debugPrint('[EmergencyService] sendEmergencyAlert called with type: $type');
+    debugPrint('[EmergencyService] sendEmergencyAlert called with type: $type, severity: $severity');
 
     try {
       final confirmed = await _showEmergencyConfirmation(context, type);
@@ -53,10 +59,15 @@ class EmergencyService {
         }
 
         final user = await _getCurrentUser();
+
+        // Attach medical history if the user has filled it in
+        final medicalHistory = await _loadMedicalHistory();
+
         final emergencyRequest = EmergencyRequest(
           id: '',
           userId: user?.id ?? 'unknown',
           type: type,
+          severity: severity,
           description: description ?? _defaultDescription,
           latitude: position.latitude,
           longitude: position.longitude,
@@ -64,6 +75,7 @@ class EmergencyService {
           status: EmergencyStatus.pending,
           createdAt: DateTime.now(),
           updatedAt: DateTime.now(),
+          medicalHistory: medicalHistory,
         );
 
         if (!context.mounted) {
@@ -78,6 +90,14 @@ class EmergencyService {
         );
         debugPrint(
           '[EmergencyService] Request created with ID: ${createdRequest.id}',
+        );
+
+        // Notify emergency contacts asynchronously (best-effort)
+        _notifyEmergencyContacts(
+          user,
+          createdRequest,
+          position.latitude,
+          position.longitude,
         );
 
         await _dismissLoadingDialog();
@@ -446,6 +466,88 @@ class EmergencyService {
     } catch (e) {
       debugPrint('Failed to update emergency status: $e');
       return false;
+    }
+  }
+
+  /// Cancels an emergency request with an optional reason string.
+  static Future<bool> cancelEmergencyRequestWithReason(
+    BuildContext context,
+    String requestId, {
+    String? reason,
+  }) async {
+    try {
+      _showLoadingDialog(context, 'Cancelling emergency request...');
+      await EmergencyRepository.cancelRequest(requestId, reason: reason);
+      await _dismissLoadingDialog();
+
+      if (context.mounted) {
+        _showSuccessSnackBar(context, 'Emergency request cancelled');
+      }
+
+      return true;
+    } catch (e) {
+      await _dismissLoadingDialog();
+      if (context.mounted) {
+        _showErrorSnackBar(context, 'Failed to cancel emergency request');
+      }
+      return false;
+    }
+  }
+
+  // ── Medical history & contacts helpers ────────────────────────────────────
+
+  /// Loads the medical profile JSON stored by the patient in SharedPreferences.
+  static Future<String?> _loadMedicalHistory() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getString(_medicalProfileKey);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Reads emergency contacts from SharedPreferences and sends each an SMS
+  /// with the request location and type.
+  static Future<void> _notifyEmergencyContacts(
+    UserModel? user,
+    EmergencyRequest request,
+    double lat,
+    double lng,
+  ) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final contactsJson = prefs.getString(_emergencyContactsKey);
+      if (contactsJson == null || contactsJson.isEmpty) return;
+
+      final List<dynamic> raw = jsonDecode(contactsJson);
+      final contacts = raw
+          .whereType<Map<String, dynamic>>()
+          .take(3) // max 3 contacts
+          .toList();
+
+      if (contacts.isEmpty) return;
+
+      final mapsUrl = 'https://maps.google.com/?q=$lat,$lng';
+      final patientName = user?.name ?? 'Patient';
+      final emergencyType = request.type.typeDisplayName;
+      final severity = request.severity.displayName;
+      final timestamp = DateTime.now().toIso8601String();
+
+      for (final contact in contacts) {
+        final phone = contact['phone']?.toString() ?? '';
+        if (phone.isEmpty) continue;
+
+        final message =
+            '⚠️ EMERGENCY ALERT: $patientName has a $severity $emergencyType emergency. '
+            'Location: $mapsUrl | Time: $timestamp | '
+            'This is an automated alert from Malawi Medical SOS.';
+
+        debugPrint('[EmergencyService] Notifying contact $phone: $message');
+        // Delegate to the existing SMS infrastructure
+        await _sendViaTwilio(message);
+      }
+    } catch (e) {
+      debugPrint('[EmergencyService] Failed to notify emergency contacts: $e');
     }
   }
 }

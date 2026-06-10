@@ -77,6 +77,7 @@ db.exec(`
     status       TEXT NOT NULL DEFAULT 'pending'
                  CHECK (status IN ('pending','accepted','in_progress','completed','cancelled')),
     responder_id TEXT REFERENCES users(id),
+    responder_phone TEXT,
     hospital_id  TEXT REFERENCES hospitals(id),
     created_at   TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at   TEXT NOT NULL DEFAULT (datetime('now')),
@@ -141,6 +142,11 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_hospitals_location
     ON hospitals(latitude, longitude);
 `);
+
+const emergencyColumns = db.prepare("PRAGMA table_info(emergency_requests)").all() as Array<{ name: string }>;
+if (!emergencyColumns.some((column) => column.name === 'responder_phone')) {
+  db.exec('ALTER TABLE emergency_requests ADD COLUMN responder_phone TEXT');
+}
 
 console.log(`[DB] SQLite database ready at: ${dbPath}`);
 

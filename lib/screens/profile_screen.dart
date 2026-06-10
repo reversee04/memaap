@@ -90,6 +90,20 @@ class ProfileScreen extends StatelessWidget {
                   ),
                   _buildListTile(
                     context,
+                    icon: LucideIcons.clipboardList,
+                    title: 'Medical Profile',
+                    subtitle: 'Allergies, conditions & medications',
+                    onTap: () => context.go('/profile/medical'),
+                  ),
+                  _buildListTile(
+                    context,
+                    icon: LucideIcons.users,
+                    title: 'Emergency Contacts',
+                    subtitle: 'Notify family during emergencies',
+                    onTap: () => context.go('/profile/contacts'),
+                  ),
+                  _buildListTile(
+                    context,
                     icon: LucideIcons.shield,
                     title: 'Privacy & Security',
                   ),

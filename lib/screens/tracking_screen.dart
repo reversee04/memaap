@@ -5,6 +5,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../models/emergency_request_model.dart';
 import '../services/emergency_tracking_service.dart';
 import '../services/emergency_service.dart';
+import '../services/phone_call_service.dart';
 import '../controllers/map_controller.dart';
 import '../widgets/status_stepper.dart';
 
@@ -58,6 +59,12 @@ class _TrackingScreenState extends State<TrackingScreen>
         backgroundColor: const Color(0xFF0033CC),
         foregroundColor: Colors.white,
         actions: [
+          if (_currentRequest?.hasResponderPhone == true)
+            IconButton(
+              onPressed: _callResponder,
+              icon: const Icon(Icons.phone),
+              tooltip: 'Call Responder',
+            ),
           if (_currentRequest?.status == EmergencyStatus.pending)
             IconButton(
               onPressed: _cancelRequest,
@@ -351,6 +358,14 @@ class _TrackingScreenState extends State<TrackingScreen>
                             fontSize: 14,
                           ),
                         ),
+                      if (_currentRequest!.hasResponderPhone)
+                        Text(
+                          _currentRequest!.responderPhone!,
+                          style: TextStyle(
+                            color: Colors.grey[700],
+                            fontSize: 14,
+                          ),
+                        ),
                     ],
                   ),
                 ),
@@ -380,7 +395,9 @@ class _TrackingScreenState extends State<TrackingScreen>
               children: [
                 Expanded(
                   child: OutlinedButton.icon(
-                    onPressed: _callResponder,
+                    onPressed: _currentRequest!.hasResponderPhone
+                        ? _callResponder
+                        : null,
                     icon: const Icon(Icons.phone),
                     label: const Text('Call Responder'),
                     style: OutlinedButton.styleFrom(
@@ -428,7 +445,7 @@ class _TrackingScreenState extends State<TrackingScreen>
 
   /// Builds floating action button
   Widget? _buildFloatingActionButton() {
-    if (_currentRequest?.hasResponder != true) return null;
+    if (_currentRequest?.hasResponderPhone != true) return null;
 
     return FloatingActionButton.extended(
       onPressed: _callResponder,
@@ -540,18 +557,20 @@ class _TrackingScreenState extends State<TrackingScreen>
 
   /// Calls the responder
   Future<void> _callResponder() async {
-    if (_currentRequest?.hasResponder != true) return;
-
-    // In a real implementation, you'd get responder's phone number
-    // For now, we'll use a mock number
-    final phoneNumber = '+2651234567';
-
-    final uri = Uri.parse('tel:$phoneNumber');
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri);
-    } else {
-      debugPrint('Could not launch phone dialer');
+    final phoneNumber = _currentRequest?.responderPhone;
+    if (phoneNumber == null || phoneNumber.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Responder phone number is not available yet.'),
+        ),
+      );
+      return;
     }
+
+    await PhoneCallService.makePhoneCall(
+      phoneNumber: phoneNumber,
+      context: context,
+    );
   }
 
   /// Shares current location
@@ -568,41 +587,204 @@ class _TrackingScreenState extends State<TrackingScreen>
     }
   }
 
-  /// Cancels the emergency request
+  /// Cancels the emergency request — shows a reason-selection bottom sheet
+  /// to prevent accidental cancellations and log why the request was stopped.
   Future<void> _cancelRequest() async {
     if (_currentRequest == null) return;
 
-    final confirmed = await showDialog<bool>(
+    final reasons = ['Mistake / False Alarm', 'Emergency Resolved', 'Other'];
+    String? selectedReason;
+    final customController = TextEditingController();
+
+    final confirmed = await showModalBottomSheet<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Cancel Emergency Request'),
-        content: const Text(
-          'Are you sure you want to cancel this emergency request? '
-          'This will notify the assigned responder.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('No'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red,
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('Yes, Cancel'),
-          ),
-        ],
-      ),
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setBottomState) {
+            return Container(
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+              ),
+              padding: EdgeInsets.only(
+                left: 24,
+                right: 24,
+                top: 24,
+                bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Header
+                  Center(
+                    child: Container(
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: Colors.grey[300],
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: Colors.red[50],
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.cancel,
+                          color: Colors.red,
+                          size: 24,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      const Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Cancel Emergency Request',
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 17,
+                              ),
+                            ),
+                            SizedBox(height: 2),
+                            Text(
+                              'Please tell us why you are cancelling.',
+                              style: TextStyle(
+                                color: Colors.grey,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 24),
+                  const Text(
+                    'REASON',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.grey,
+                      letterSpacing: 1.2,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: reasons.map((r) {
+                      final isSelected = selectedReason == r;
+                      return ChoiceChip(
+                        label: Text(r),
+                        selected: isSelected,
+                        onSelected: (_) =>
+                            setBottomState(() => selectedReason = r),
+                        selectedColor: Colors.red[100],
+                        labelStyle: TextStyle(
+                          color: isSelected ? Colors.red[800] : Colors.grey[700],
+                          fontWeight: isSelected
+                              ? FontWeight.bold
+                              : FontWeight.normal,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(20),
+                          side: BorderSide(
+                            color: isSelected
+                                ? Colors.red[300]!
+                                : Colors.grey[300]!,
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                  if (selectedReason == 'Other') ...[
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: customController,
+                      decoration: InputDecoration(
+                        hintText: 'Describe your reason…',
+                        filled: true,
+                        fillColor: Colors.grey[50],
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(color: Colors.grey[300]!),
+                        ),
+                      ),
+                      maxLines: 2,
+                    ),
+                  ],
+                  const SizedBox(height: 24),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () => Navigator.of(ctx).pop(false),
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            side: const BorderSide(color: Colors.grey),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                          child: const Text('Keep Active'),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: ElevatedButton(
+                          onPressed: selectedReason == null
+                              ? null
+                              : () => Navigator.of(ctx).pop(true),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.red,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                          child: const Text(
+                            'Yes, Cancel',
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
     );
 
-    if (confirmed == true) {
-      await EmergencyService.cancelEmergencyRequest(
+    if (confirmed == true && mounted) {
+      final reason = selectedReason == 'Other'
+          ? customController.text.trim().isNotEmpty
+              ? customController.text.trim()
+              : 'Other'
+          : selectedReason;
+
+      await EmergencyService.cancelEmergencyRequestWithReason(
         context,
         _currentRequest!.id,
+        reason: reason,
       );
     }
+
+    customController.dispose();
   }
 
   /// Navigates to review screen when request is resolved

@@ -6,18 +6,21 @@ export class EmergencyRequestRepository {
   static create(data: {
     userId: string; type: string; description?: string;
     latitude: number; longitude: number; address?: string;
+    responderPhone?: string | null; severity?: string;
   }): any {
     const id = uuidv4();
     db.prepare(`
       INSERT INTO emergency_requests
         (id, user_id, type, description, latitude, longitude, address,
-         status, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', datetime('now'), datetime('now'))
+         responder_phone, severity, status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', datetime('now'), datetime('now'))
     `).run(
       id, data.userId, data.type,
       data.description || null,
       data.latitude, data.longitude,
       data.address || null,
+      data.responderPhone || null,
+      data.severity || 'urgent',
     );
     return this.findById(id);
   }
@@ -39,14 +42,18 @@ export class EmergencyRequestRepository {
     ).all(userId);
   }
 
-  /** Get all pending requests — used by the responder dashboard. */
+  /** Get all pending requests — ordered by severity priority (critical first), then time. */
   static findPending(): any[] {
     return db.prepare(
       "SELECT er.*, u.name as patient_name, u.phone as patient_phone " +
       "FROM emergency_requests er " +
       "JOIN users u ON er.user_id = u.id " +
       "WHERE er.status = 'pending' " +
-      "ORDER BY er.created_at ASC"
+      "ORDER BY CASE COALESCE(er.severity, 'urgent') " +
+      "  WHEN 'critical' THEN 0 " +
+      "  WHEN 'urgent' THEN 1 " +
+      "  ELSE 2 END ASC, " +
+      "er.created_at ASC"
     ).all();
   }
 
@@ -82,14 +89,29 @@ export class EmergencyRequestRepository {
   }
 
   /** Assign a responder to a request (accept it). */
-  static assignResponder(requestId: string, responderId: string): any {
+  static assignResponder(requestId: string, responderId: string, responderPhone?: string | null): any {
     db.prepare(`
       UPDATE emergency_requests
-      SET responder_id = ?, status = 'accepted', accepted_at = datetime('now'),
+      SET responder_id = ?, responder_phone = ?, status = 'accepted', accepted_at = datetime('now'),
           updated_at = datetime('now')
       WHERE id = ? AND status = 'pending'
-    `).run(responderId, requestId);
+    `).run(responderId, responderPhone || null, requestId);
     return this.findById(requestId);
+  }
+
+  /** Get contact details for the responder assigned to a request. */
+  static findResponderInfo(requestId: string): any {
+    return db.prepare(`
+      SELECT
+        er.id as request_id,
+        er.user_id,
+        er.responder_id,
+        COALESCE(er.responder_phone, responder.phone) as responder_phone,
+        responder.name as responder_name
+      FROM emergency_requests er
+      LEFT JOIN users responder ON responder.id = er.responder_id
+      WHERE er.id = ?
+    `).get(requestId);
   }
 
   /** Get requests within a date range. */

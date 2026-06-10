@@ -146,11 +146,22 @@ class RequestTile extends StatelessWidget {
       case EmergencyType.accident:
         return Icons.car_crash;
       case EmergencyType.cardiac:
-        return Icons.favorite_border;
+      case EmergencyType.heartAttack:
+        return Icons.favorite;
       case EmergencyType.stroke:
+      case EmergencyType.unconscious:
+      case EmergencyType.seizure:
         return Icons.psychology;
       case EmergencyType.trauma:
+      case EmergencyType.severeBleed:
         return Icons.healing;
+      case EmergencyType.choking:
+      case EmergencyType.breathingDifficulty:
+        return Icons.air;
+      case EmergencyType.allergicReaction:
+        return Icons.warning;
+      case EmergencyType.maternal:
+        return Icons.child_care;
       case EmergencyType.other:
         return Icons.help_outline;
     }
@@ -164,11 +175,21 @@ class RequestTile extends StatelessWidget {
       case EmergencyType.accident:
         return Colors.red;
       case EmergencyType.cardiac:
+      case EmergencyType.heartAttack:
         return Colors.pink;
       case EmergencyType.stroke:
+      case EmergencyType.unconscious:
+      case EmergencyType.seizure:
         return Colors.purple;
       case EmergencyType.trauma:
+      case EmergencyType.severeBleed:
         return Colors.orange;
+      case EmergencyType.choking:
+      case EmergencyType.breathingDifficulty:
+        return Colors.cyan;
+      case EmergencyType.allergicReaction:
+      case EmergencyType.maternal:
+        return Colors.green;
       case EmergencyType.other:
         return Colors.grey;
     }

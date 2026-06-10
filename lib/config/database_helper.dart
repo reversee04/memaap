@@ -21,7 +21,7 @@ class DatabaseHelper {
   static Database? _database;
 
   /// Database version for migrations
-  static const int _databaseVersion = 3;
+  static const int _databaseVersion = 5;
 
   /// Database name
   static const String _databaseName = 'memaap.db';
@@ -53,11 +53,14 @@ class DatabaseHelper {
   static const String colRequestAddress = 'address';
   static const String colRequestResponderId = 'responder_id';
   static const String colRequestResponderName = 'responder_name';
+  static const String colRequestResponderPhone = 'responder_phone';
   static const String colRequestEstimatedArrival = 'estimated_arrival_minutes';
   static const String colRequestIsOfflineQueued = 'is_offline_queued';
   static const String colRequestSyncedAt = 'synced_at';
   static const String colRequestResponderLat = 'responder_lat';
   static const String colRequestResponderLng = 'responder_lng';
+  static const String colRequestSeverity = 'severity';
+  static const String colRequestMedicalHistory = 'medical_history';
 
   /// Column names for cached_hospitals table
   static const String colHospitalId = 'id';
@@ -143,11 +146,14 @@ class DatabaseHelper {
           $colRequestAddress TEXT,
           $colRequestResponderId TEXT,
           $colRequestResponderName TEXT,
+          $colRequestResponderPhone TEXT,
           $colRequestEstimatedArrival INTEGER,
           $colRequestIsOfflineQueued INTEGER NOT NULL DEFAULT 0,
           $colRequestSyncedAt TEXT,
           $colRequestResponderLat REAL,
-          $colRequestResponderLng REAL
+          $colRequestResponderLng REAL,
+          $colRequestSeverity TEXT NOT NULL DEFAULT 'urgent',
+          $colRequestMedicalHistory TEXT
         )
       ''');
 
@@ -222,6 +228,7 @@ class DatabaseHelper {
             $colRequestAddress TEXT,
             $colRequestResponderId TEXT,
             $colRequestResponderName TEXT,
+            $colRequestResponderPhone TEXT,
             $colRequestEstimatedArrival INTEGER,
             $colRequestIsOfflineQueued INTEGER NOT NULL DEFAULT 0,
             $colRequestSyncedAt TEXT,
@@ -235,7 +242,7 @@ class DatabaseHelper {
             SELECT
               id, user_id, type, description, latitude, longitude,
               status, created_at, updated_at, address,
-              responder_id, responder_name, estimated_arrival_minutes,
+              responder_id, responder_name, NULL, estimated_arrival_minutes,
               CAST(is_offline_queued AS INTEGER),
               synced_at, responder_lat, responder_lng
             FROM $tableEmergencyRequests
@@ -245,6 +252,31 @@ class DatabaseHelper {
         // Recreate indexes
         await db.execute('CREATE INDEX IF NOT EXISTS idx_requests_user_id ON $tableEmergencyRequests ($colRequestUserId)');
         await db.execute('CREATE INDEX IF NOT EXISTS idx_requests_status ON $tableEmergencyRequests ($colRequestStatus)');
+      }
+
+      if (oldVersion < 4) {
+        try {
+          await db.execute(
+            'ALTER TABLE $tableEmergencyRequests ADD COLUMN $colRequestResponderPhone TEXT',
+          );
+        } catch (_) {
+          // Column may already exist from a fresh install or repaired migration.
+        }
+      }
+
+      if (oldVersion < 5) {
+        // v4 → v5: add severity and medical_history columns.
+        final v5Migrations = [
+          "ALTER TABLE $tableEmergencyRequests ADD COLUMN $colRequestSeverity TEXT NOT NULL DEFAULT 'urgent'",
+          'ALTER TABLE $tableEmergencyRequests ADD COLUMN $colRequestMedicalHistory TEXT',
+        ];
+        for (final sql in v5Migrations) {
+          try {
+            await db.execute(sql);
+          } catch (_) {
+            // Column may already exist — safe to ignore.
+          }
+        }
       }
     } catch (e) {
       throw Exception('Failed to migrate database from version $oldVersion to $newVersion: $e');

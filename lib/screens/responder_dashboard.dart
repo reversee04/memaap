@@ -53,7 +53,14 @@ class ResponderDashboardCubit extends Cubit<ResponderDashboardState> {
           // Merge polled list with current state — keep the newest unique set
           final merged = {
             for (final r in [...polledRequests, ...state.requests]) r.id: r,
-          }.values.toList()..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+          }.values.toList()
+            ..sort((a, b) {
+              // Primary: severity priority (critical=0, urgent=1, non_urgent=2)
+              final sev = a.severity.priorityOrder.compareTo(b.severity.priorityOrder);
+              if (sev != 0) return sev;
+              // Secondary: older requests first within same severity
+              return a.createdAt.compareTo(b.createdAt);
+            });
 
           final hasNew =
               merged.length > state.requests.length ||
@@ -109,14 +116,17 @@ class ResponderDashboardCubit extends Cubit<ResponderDashboardState> {
               if (isClosed) return;
               final currentState = state;
               // Insert or update the request in the list
-              final updated = [
-                request,
-                ...currentState.requests.where((r) => r.id != request.id),
-              ];
-              updated.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+              final merged = <String, EmergencyRequest>{
+                for (final r in [request, ...currentState.requests]) r.id: r,
+              }.values.toList()
+                ..sort((a, b) {
+                  final sev = a.severity.priorityOrder.compareTo(b.severity.priorityOrder);
+                  if (sev != 0) return sev;
+                  return a.createdAt.compareTo(b.createdAt);
+                });
 
               emit(
-                currentState.copyWith(requests: updated, hasNewRequest: true),
+                currentState.copyWith(requests: merged, hasNewRequest: true),
               );
 
               // Clear new request flag after a delay
@@ -508,6 +518,11 @@ class _ResponderDashboardState extends State<ResponderDashboard>
     final pendingCount = state.requests
         .where((r) => r.status == EmergencyStatus.pending)
         .length;
+    final criticalCount = state.requests
+        .where((r) =>
+            r.severity == EmergencySeverity.critical &&
+            r.status == EmergencyStatus.pending)
+        .length;
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -533,13 +548,28 @@ class _ResponderDashboardState extends State<ResponderDashboard>
                 ),
               ),
               const SizedBox(width: 8),
-              Text(
-                '$pendingCount Urgent SOS',
-                style: const TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 13,
-                  color: Color(0xFFE53935),
-                ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '$pendingCount Pending SOS',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 13,
+                      color: Color(0xFFE53935),
+                    ),
+                  ),
+                  if (criticalCount > 0)
+                    Text(
+                      '$criticalCount CRITICAL',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 10,
+                        color: Color(0xFFD32F2F),
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                ],
               ),
             ],
           ),
@@ -672,7 +702,14 @@ class _ResponderDashboardState extends State<ResponderDashboard>
                             fontSize: 15,
                           ),
                         ),
-                        _buildStatusBadge(request.status),
+                        Row(
+                          children: [
+                            // Severity badge
+                            _buildSeverityBadge(request.severity),
+                            const SizedBox(width: 6),
+                            _buildStatusBadge(request.status),
+                          ],
+                        ),
                       ],
                     ),
                     const SizedBox(height: 6),
@@ -795,6 +832,54 @@ class _ResponderDashboardState extends State<ResponderDashboard>
       child: Text(
         label,
         style: TextStyle(color: fg, fontSize: 10, fontWeight: FontWeight.bold),
+      ),
+    );
+  }
+
+  Widget _buildSeverityBadge(EmergencySeverity severity) {
+    Color bg;
+    Color fg;
+    IconData icon;
+
+    switch (severity) {
+      case EmergencySeverity.critical:
+        bg = const Color(0xFFFFEBEE);
+        fg = const Color(0xFFD32F2F);
+        icon = LucideIcons.alertOctagon;
+        break;
+      case EmergencySeverity.urgent:
+        bg = const Color(0xFFFFF3E0);
+        fg = const Color(0xFFF57C00);
+        icon = LucideIcons.alertTriangle;
+        break;
+      case EmergencySeverity.nonUrgent:
+        bg = const Color(0xFFE8F5E9);
+        fg = const Color(0xFF2E7D32);
+        icon = LucideIcons.info;
+        break;
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: fg, size: 10),
+          const SizedBox(width: 3),
+          Text(
+            severity.displayName.toUpperCase(),
+            style: TextStyle(
+              color: fg,
+              fontSize: 9,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 0.3,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1501,7 +1586,10 @@ class _ResponderDashboardState extends State<ResponderDashboard>
                         : 'Not available',
                   ),
                   const SizedBox(height: 16),
-
+                  
+                  // Medical History
+                  _buildMedicalHistorySection(request),
+                  
                   // Progress workflow visualizer
                   const Divider(),
                   const SizedBox(height: 12),
@@ -1549,6 +1637,114 @@ class _ResponderDashboardState extends State<ResponderDashboard>
                 ],
               ),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMedicalHistorySection(EmergencyRequest request) {
+    final medicalData = request.medicalHistoryMap;
+    if (medicalData == null || medicalData.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    Widget buildChipWrap(String label, List<dynamic>? items, Color color) {
+      if (items == null || items.isEmpty) return const SizedBox.shrink();
+      return Padding(
+        padding: const EdgeInsets.only(top: 8.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+                color: Colors.grey[600],
+              ),
+            ),
+            const SizedBox(height: 4),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: items.map((i) {
+                return Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: color.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: color.withOpacity(0.3)),
+                  ),
+                  child: Text(
+                    i.toString(),
+                    style: TextStyle(
+                      color: color,
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                );
+              }).toList(),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.red.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.red.withOpacity(0.2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(LucideIcons.clipboardList, size: 16, color: Colors.red),
+              const SizedBox(width: 8),
+              const Text(
+                'Patient Medical History',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 13,
+                  color: Colors.red,
+                ),
+              ),
+              const Spacer(),
+              if (medicalData['bloodType'] != null)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.red,
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    'Blood: ${medicalData['bloodType']}',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          buildChipWrap(
+            'CONDITIONS',
+            medicalData['conditions'],
+            Colors.orange[800]!,
+          ),
+          buildChipWrap('ALLERGIES', medicalData['allergies'], Colors.red[800]!),
+          buildChipWrap(
+            'MEDICATIONS',
+            medicalData['medications'],
+            Colors.blue[800]!,
           ),
         ],
       ),
