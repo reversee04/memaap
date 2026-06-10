@@ -30,11 +30,11 @@
 
 ## Proposed Improvements
 
-### 1. Push Notifications (Firebase Cloud Messaging)
+### 1. Real-Time Notifications (WebSockets / Socket.IO)
 **Priority**: High
 **Impact**: High
 
-Implement push notifications using Firebase Cloud Messaging:
+Implement instant notifications using WebSockets / Socket.IO:
 - New emergency request notification
 - Assignment notification
 - Cancellation notification
@@ -43,10 +43,10 @@ Implement push notifications using Firebase Cloud Messaging:
 - Status update notification
 
 **Benefits**:
-- Responders get alerts even when app is closed
+- Near real-time updates for active responders
 - Faster response times
 - Better reliability
-- Reduced need to keep app open
+- Better for dispatcher/operator workflows
 
 ### 2. Sound and Vibration Alerts
 **Priority**: High
@@ -211,23 +211,22 @@ Track notification metrics:
 
 ### Phase 1: Critical Improvements (Week 1-2)
 
-#### 1.1 Push Notifications (Firebase Cloud Messaging)
+#### 1.1 Real-Time Notifications (WebSockets / Socket.IO)
 **Files to modify**:
-- `backend/src/services/notification.service.ts` - Add FCM integration
-- `lib/services/push_notification_service.dart` (NEW) - Handle push notifications
-- `android/app/build.gradle` - Add FCM dependencies
-- `ios/Runner/Info.plist` - Add FCM configuration
-- `lib/main.dart` - Initialize FCM
+- `backend/src/index.ts` - Socket.IO room management
+- `backend/src/routes/emergency.routes.ts` - Emit emergency lifecycle events
+- `lib/services/realtime_notification_service.dart` (NEW) - Socket.IO client subscription
+- `lib/screens/responder_dashboard.dart` - Handle real-time events and update UI immediately
+- `pubspec.yaml` - Add `socket_io_client`
 
 **Steps**:
-1. Set up Firebase project
-2. Add FCM to backend
-3. Add FCM to Flutter app
-4. Implement token registration
-5. Send push notifications on new request
-6. Send push notifications on assignment
-7. Test on Android and iOS
-8. Handle notification clicks
+1. Add responder/global Socket.IO rooms
+2. Emit events on create/assign/reassign/status/cancel
+3. Add Flutter Socket.IO client service
+4. Join responder and global rooms after login
+5. Refresh responder dashboard on socket events
+6. Keep polling as fallback for resilience
+7. Test active-duty real-time delivery and reconnect flow
 
 **Estimated time**: 16 hours
 

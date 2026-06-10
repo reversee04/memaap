@@ -49,6 +49,18 @@ app.get('/api/health', (_req: Request, res: Response) => {
 io.on('connection', (socket: Socket) => {
   console.log('[WS] Client connected:', socket.id);
 
+  // Join global responder stream for all emergency broadcasts.
+  socket.on('join_responders', () => {
+    socket.join('responders_all');
+    console.log(`[WS] ${socket.id} joined room: responders_all`);
+  });
+
+  // Join personal responder stream for assignment-specific events.
+  socket.on('join_responder', (responderId: string) => {
+    socket.join(`responder_${responderId}`);
+    console.log(`[WS] ${socket.id} joined room: responder_${responderId}`);
+  });
+
   // Responder or patient can join a room keyed by requestId to get live updates
   socket.on('join_request', (requestId: string) => {
     socket.join(`request_${requestId}`);

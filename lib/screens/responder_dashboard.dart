@@ -13,6 +13,7 @@ import '../repositories/emergency_repository.dart';
 import '../services/location_service.dart';
 import '../services/responder_service.dart';
 import '../services/navigation_service.dart';
+import '../services/realtime_notification_service.dart';
 import '../controllers/map_controller.dart';
 import '../services/auth_service.dart';
 
@@ -25,6 +26,7 @@ class ResponderDashboardCubit extends Cubit<ResponderDashboardState> {
   @override
   Future<void> close() {
     _requestsSubscription?.cancel();
+    RealtimeNotificationService.disconnect();
     EmergencyRepository.stopPollingForRequests();
     return super.close();
   }
@@ -44,6 +46,37 @@ class ResponderDashboardCubit extends Cubit<ResponderDashboardState> {
       // Load real pending requests and requests assigned to this responder.
       final requests = await EmergencyRepository.getResponderDashboardRequests(
         user.id,
+      );
+
+      RealtimeNotificationService.connectResponder(
+        responderId: user.id,
+        onEvent: (event, payload) async {
+          if (isClosed) return;
+
+          if (event == 'emergency:new' ||
+              event == 'emergency:assigned' ||
+              event == 'emergency:reassigned' ||
+              event == 'emergency:status' ||
+              event == 'emergency:cancelled') {
+            final refreshed = await EmergencyRepository
+                .getResponderDashboardRequests(user.id);
+
+            emit(
+              state.copyWith(
+                requests: refreshed,
+                hasNewRequest: event == 'emergency:new' ? true : state.hasNewRequest,
+              ),
+            );
+
+            if (event == 'emergency:new') {
+              Future.delayed(const Duration(seconds: 4), () {
+                if (!isClosed) {
+                  emit(state.copyWith(hasNewRequest: false));
+                }
+              });
+            }
+          }
+        },
       );
 
       EmergencyRepository.startPollingForRequests((_) async {

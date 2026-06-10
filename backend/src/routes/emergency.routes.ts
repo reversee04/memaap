@@ -6,6 +6,7 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { AuthService } from '../services/auth.service';
 import { EmergencyRequestRepository } from '../repositories/emergency-request.repository';
 import { AssignmentService } from '../services/assignment.service';
+import { io } from '../index';
 
 const router = Router();
 
@@ -24,6 +25,28 @@ type ResponderAvailability =
 
 function isValidAvailability(value: string): value is ResponderAvailability {
   return ['available', 'busy', 'offline', 'on_break', 'in_transit'].includes(value);
+}
+
+function broadcastEmergencyEvent(event: string, emergency: any, extra: Record<string, any> = {}): void {
+  io.to('responders_all').emit(event, {
+    emergency,
+    ...extra,
+    timestamp: new Date().toISOString(),
+  });
+
+  io.to(`request_${emergency.id}`).emit(event, {
+    emergency,
+    ...extra,
+    timestamp: new Date().toISOString(),
+  });
+
+  if (emergency.responder_id) {
+    io.to(`responder_${emergency.responder_id}`).emit(event, {
+      emergency,
+      ...extra,
+      timestamp: new Date().toISOString(),
+    });
+  }
 }
 
 // ── JWT guard ────────────────────────────────────────────────────────────────
@@ -90,6 +113,18 @@ router.post('/create', requireAuth, (req: Request, res: Response): void => {
     });
 
     const assignment = AssignmentService.assignClosestResponder(emergency.id);
+
+    broadcastEmergencyEvent('emergency:new', assignment.emergency, {
+      autoAssigned: assignment.assignedResponder != null,
+      assignment: assignment.assignedResponder
+        ? {
+            responderId: assignment.assignedResponder.id,
+            responderName: assignment.assignedResponder.name,
+            responderPhone: assignment.assignedResponder.phone,
+            distanceKm: assignment.distanceKm,
+          }
+        : null,
+    });
 
     res.status(201).json({
       emergency: assignment.emergency,
@@ -275,6 +310,10 @@ router.put<{ id: string }>('/:id/accept', requireAuth, async (req: Request<{ id:
 
     AssignmentService.setResponderAvailability(userId, 'busy');
 
+    broadcastEmergencyEvent('emergency:assigned', emergency, {
+      assignedResponderId: userId,
+    });
+
     res.json({ emergency });
   } catch (error) {
     console.error('Accept emergency error:', error);
@@ -322,6 +361,11 @@ router.put<{ id: string }>('/:id/decline', requireAuth, (req: Request<{ id: stri
 
     const excluded = declinedResponderId ? [declinedResponderId] : [];
     const reassignment = AssignmentService.reassignAfterDecline(req.params.id, excluded);
+
+    broadcastEmergencyEvent('emergency:reassigned', reassignment.emergency, {
+      previousResponderId: declinedResponderId,
+      reassigned: reassignment.assignedResponder != null,
+    });
 
     res.json({
       emergency: reassignment.emergency,
@@ -396,6 +440,11 @@ router.put<{ id: string }>('/:id/status', requireAuth, (req: Request<{ id: strin
       }
     }
 
+    broadcastEmergencyEvent('emergency:status', emergency, {
+      previousStatus: current.status,
+      status,
+    });
+
     res.json({ emergency });
   } catch (error) {
     console.error('Update status error:', error);
@@ -421,6 +470,10 @@ router.delete<{ id: string }>('/:id', requireAuth, (req: Request<{ id: string }>
       });
       return;
     }
+
+    broadcastEmergencyEvent('emergency:cancelled', emergency, {
+      cancelledBy: (res.locals.user as AuthenticatedUser).userId,
+    });
 
     res.json({ emergency });
   } catch (error) {
