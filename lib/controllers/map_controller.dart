@@ -3,10 +3,8 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:flutter/services.dart';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
-import '../config/app_config.dart';
 import '../models/hospital_model.dart';
+import '../services/navigation_service.dart';
 
 /// Custom exceptions for map operations
 class MapException implements Exception {
@@ -212,7 +210,17 @@ class MapController {
     double width = 5.0,
   }) async {
     try {
-      final directions = await _getDirections(origin, destination);
+      final routes = await NavigationService.getRouteOptions(
+        origin: origin,
+        destination: destination,
+        includeAlternatives: false,
+      );
+
+      if (routes.isEmpty || routes.first.points.isEmpty) {
+        throw MapException('No route geometry returned');
+      }
+
+      final directions = routes.first.points;
       
       final polylineId = PolylineId(routeId ?? 'route_${DateTime.now().millisecondsSinceEpoch}');
       final polyline = Polyline(
@@ -229,80 +237,6 @@ class MapController {
     } catch (e) {
       throw MapException('Failed to draw route: $e');
     }
-  }
-
-  /// Gets directions from Google Directions API
-  Future<List<LatLng>> _getDirections(LatLng origin, LatLng destination) async {
-    final apiKey = AppConfig.googleMapsKey;
-    if (apiKey.isEmpty) {
-      throw MapException('Google Maps API key not configured');
-    }
-
-    final url = 'https://maps.googleapis.com/maps/api/directions/json'
-        '?origin=${origin.latitude},${origin.longitude}'
-        '&destination=${destination.latitude},${destination.longitude}'
-        '&key=$apiKey'
-        '&mode=driving'
-        '&avoid=tolls';
-
-    final response = await http.get(Uri.parse(url));
-    
-    if (response.statusCode != 200) {
-      throw MapException('Failed to get directions: HTTP ${response.statusCode}');
-    }
-
-    final data = jsonDecode(response.body);
-    
-    if (data['status'] != 'OK') {
-      throw MapException('Directions API error: ${data['status']}');
-    }
-
-    final route = data['routes'][0];
-    final leg = route['legs'][0];
-    final steps = leg['steps'] as List;
-    
-    final coordinates = <LatLng>[];
-    coordinates.add(origin);
-    
-    for (final step in steps) {
-      final polylinePoints = step['polyline']['points'];
-      final decodedPoints = _decodePolyline(polylinePoints);
-      coordinates.addAll(decodedPoints);
-    }
-    
-    coordinates.add(destination);
-    return coordinates;
-  }
-
-  /// Decodes Google's encoded polyline string
-  List<LatLng> _decodePolyline(String encoded) {
-    final points = <LatLng>[];
-    int index = 0, len = encoded.length;
-    int lat = 0, lng = 0;
-
-    while (index < len) {
-      int b, shift = 0, result = 0;
-      do {
-        b = encoded.codeUnitAt(index++) - 63;
-        result |= (b & 0x1f) << shift;
-        shift += 5;
-      } while (b >= 0x20);
-      int dlat = ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
-      lat += dlat;
-
-      shift = 0;
-      result = 0;
-      do {
-        b = encoded.codeUnitAt(index++) - 63;
-        result |= (b & 0x1f) << shift;
-        shift += 5;
-      } while (b >= 0x20);
-      int dlng = ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
-      lng += dlng;
-
-      points.add(LatLng(lat / 1E5, lng / 1E5));
-    }
-    return points;
   }
 
   /// Clears all routes from the map

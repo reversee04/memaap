@@ -63,33 +63,69 @@ class NavigationService {
       throw NavigationException('Google Maps API key not configured');
     }
 
-    final avoidParts = <String>[];
-    if (avoidTolls) avoidParts.add('tolls');
-    if (avoidHighways) avoidParts.add('highways');
+    final uri = Uri.https(
+      'routes.googleapis.com',
+      '/directions/v2:computeRoutes',
+    );
 
-    final uri = Uri.https('maps.googleapis.com', '/maps/api/directions/json', {
-      'origin': '${origin.latitude},${origin.longitude}',
-      'destination': '${destination.latitude},${destination.longitude}',
-      'mode': 'driving',
-      'alternatives': includeAlternatives ? 'true' : 'false',
-      'departure_time': 'now',
-      'traffic_model': 'best_guess',
-      if (avoidParts.isNotEmpty) 'avoid': avoidParts.join('|'),
-      'key': apiKey,
-    });
+    final payload = <String, dynamic>{
+      'origin': {
+        'location': {
+          'latLng': {
+            'latitude': origin.latitude,
+            'longitude': origin.longitude,
+          },
+        },
+      },
+      'destination': {
+        'location': {
+          'latLng': {
+            'latitude': destination.latitude,
+            'longitude': destination.longitude,
+          },
+        },
+      },
+      'travelMode': 'DRIVE',
+      'routingPreference': 'TRAFFIC_AWARE_OPTIMAL',
+      'computeAlternativeRoutes': includeAlternatives,
+      'routeModifiers': {
+        'avoidTolls': avoidTolls,
+        'avoidHighways': avoidHighways,
+      },
+      'languageCode': 'en-US',
+      'units': 'METRIC',
+      'departureTime': DateTime.now().toUtc().toIso8601String(),
+    };
 
-    final response = await http.get(uri);
+    final response = await http.post(
+      uri,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': apiKey,
+        'X-Goog-FieldMask':
+            'routes.duration,routes.distanceMeters,routes.description,'
+            'routes.polyline.encodedPolyline,routes.legs.duration,'
+            'routes.legs.staticDuration,routes.legs.distanceMeters',
+      },
+      body: jsonEncode(payload),
+    );
+
     if (response.statusCode != 200) {
-      throw NavigationException('Directions request failed (${response.statusCode})');
+      String message = 'Routes request failed (${response.statusCode})';
+      try {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        final error = data['error'] as Map<String, dynamic>?;
+        final apiMessage = error?['message']?.toString();
+        if (apiMessage != null && apiMessage.isNotEmpty) {
+          message = 'Routes API error: $apiMessage';
+        }
+      } catch (_) {
+        // Keep generic message when response body is not JSON.
+      }
+      throw NavigationException(message);
     }
 
     final data = jsonDecode(response.body) as Map<String, dynamic>;
-    final status = data['status']?.toString() ?? 'UNKNOWN';
-    if (status != 'OK') {
-      final error = data['error_message']?.toString();
-      throw NavigationException('Directions API error: $status${error != null ? ' - $error' : ''}');
-    }
-
     final routes = (data['routes'] as List<dynamic>?) ?? const [];
     if (routes.isEmpty) {
       throw NavigationException('No routes found');
@@ -102,32 +138,63 @@ class NavigationService {
       if (legs.isEmpty) continue;
 
       final firstLeg = legs.first as Map<String, dynamic>;
-      final duration = firstLeg['duration'] as Map<String, dynamic>?;
-      final durationInTraffic = firstLeg['duration_in_traffic'] as Map<String, dynamic>?;
-      final distance = firstLeg['distance'] as Map<String, dynamic>?;
-
-      final encoded = (route['overview_polyline'] as Map<String, dynamic>?)?['points']?.toString() ?? '';
+      final duration = _parseDurationToSeconds(route['duration']?.toString()) ??
+        _parseDurationToSeconds(firstLeg['duration']?.toString()) ??
+        0;
+      final staticDuration =
+        _parseDurationToSeconds(firstLeg['staticDuration']?.toString());
+      final distanceMeters =
+        (route['distanceMeters'] as num?)?.toInt() ??
+        (firstLeg['distanceMeters'] as num?)?.toInt() ??
+        0;
+      final encoded = (route['polyline'] as Map<String, dynamic>?)?['encodedPolyline']
+          ?.toString() ??
+        '';
       final points = _decodePolyline(encoded);
 
       options.add(
         RouteOption(
           routeId: 'route_$i',
-          summary: route['summary']?.toString().trim().isNotEmpty == true
-              ? route['summary'].toString()
+        summary: route['description']?.toString().trim().isNotEmpty == true
+          ? route['description'].toString()
               : 'Option ${i + 1}',
           points: points,
-          durationSeconds: (duration?['value'] as num?)?.toInt() ?? 0,
-          durationInTrafficSeconds: (durationInTraffic?['value'] as num?)?.toInt(),
-          distanceMeters: (distance?['value'] as num?)?.toInt() ?? 0,
-          durationText: duration?['text']?.toString() ?? 'Unknown',
-          durationInTrafficText: durationInTraffic?['text']?.toString(),
-          distanceText: distance?['text']?.toString() ?? 'Unknown',
+        durationSeconds: staticDuration ?? duration,
+        durationInTrafficSeconds: staticDuration == null ? null : duration,
+        distanceMeters: distanceMeters,
+        durationText: _secondsToText(staticDuration ?? duration),
+        durationInTrafficText:
+          staticDuration == null ? null : _secondsToText(duration),
+        distanceText: _metersToText(distanceMeters),
         ),
       );
     }
 
     options.sort((a, b) => a.effectiveDurationSeconds.compareTo(b.effectiveDurationSeconds));
     return options;
+  }
+
+  static int? _parseDurationToSeconds(String? value) {
+    if (value == null || value.isEmpty) return null;
+    final cleaned = value.endsWith('s') ? value.substring(0, value.length - 1) : value;
+    return int.tryParse(cleaned);
+  }
+
+  static String _secondsToText(int seconds) {
+    if (seconds <= 0) return 'Unknown';
+    final mins = (seconds / 60).round();
+    if (mins < 60) return '${mins} min';
+    final hours = mins ~/ 60;
+    final remaining = mins % 60;
+    if (remaining == 0) return '${hours}h';
+    return '${hours}h ${remaining}m';
+  }
+
+  static String _metersToText(int meters) {
+    if (meters <= 0) return 'Unknown';
+    if (meters < 1000) return '${meters} m';
+    final km = meters / 1000;
+    return '${km.toStringAsFixed(km >= 10 ? 0 : 1)} km';
   }
 
   static Future<void> launchTurnByTurnNavigation({
