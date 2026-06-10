@@ -17,7 +17,7 @@ class PhoneCallService {
     if (!hasPermission) return false;
 
     final uri = Uri(scheme: 'tel', path: cleanNumber);
-    final launched = await launchUrl(uri);
+    final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
     if (!launched && context.mounted) {
       _showError(context, 'Could not open the phone dialer.');
     }
