@@ -572,20 +572,13 @@ class _TrackingScreenState extends State<TrackingScreen>
 
   /// Calls the responder by opening phone dialer with number prefilled
   Future<void> _callResponder() async {
+    const fallbackResponderPhone = '+265 984433365';
     final phoneNumber = _currentRequest?.responderPhone;
     final normalizedPhone = _normalizePhoneForDialer(phoneNumber);
-
-    if (normalizedPhone == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Responder phone number is not available yet.'),
-        ),
-      );
-      return;
-    }
+    final numberToDial = normalizedPhone ?? fallbackResponderPhone;
 
     await PhoneCallService.makePhoneCall(
-      phoneNumber: normalizedPhone,
+      phoneNumber: numberToDial,
       context: context,
     );
   }
