@@ -45,6 +45,12 @@ db.exec(`
                 CHECK (role IN ('patient','responder','admin')),
     status      TEXT NOT NULL DEFAULT 'active'
                 CHECK (status IN ('active','inactive','banned')),
+    availability TEXT NOT NULL DEFAULT 'offline'
+                 CHECK (availability IN ('available','busy','offline','on_break','in_transit')),
+    last_latitude REAL,
+    last_longitude REAL,
+    last_location_updated_at TEXT,
+    max_active_assignments INTEGER NOT NULL DEFAULT 2,
     created_at  TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
   );
@@ -71,6 +77,8 @@ db.exec(`
     user_id      TEXT NOT NULL REFERENCES users(id),
     type         TEXT NOT NULL,
     description  TEXT,
+    severity     TEXT NOT NULL DEFAULT 'urgent'
+           CHECK (severity IN ('critical','urgent','non_urgent')),
     latitude     REAL NOT NULL,
     longitude    REAL NOT NULL,
     address      TEXT,
@@ -146,6 +154,26 @@ db.exec(`
 const emergencyColumns = db.prepare("PRAGMA table_info(emergency_requests)").all() as Array<{ name: string }>;
 if (!emergencyColumns.some((column) => column.name === 'responder_phone')) {
   db.exec('ALTER TABLE emergency_requests ADD COLUMN responder_phone TEXT');
+}
+if (!emergencyColumns.some((column) => column.name === 'severity')) {
+  db.exec("ALTER TABLE emergency_requests ADD COLUMN severity TEXT NOT NULL DEFAULT 'urgent'");
+}
+
+const userColumns = db.prepare("PRAGMA table_info(users)").all() as Array<{ name: string }>;
+if (!userColumns.some((column) => column.name === 'availability')) {
+  db.exec("ALTER TABLE users ADD COLUMN availability TEXT NOT NULL DEFAULT 'offline'");
+}
+if (!userColumns.some((column) => column.name === 'last_latitude')) {
+  db.exec('ALTER TABLE users ADD COLUMN last_latitude REAL');
+}
+if (!userColumns.some((column) => column.name === 'last_longitude')) {
+  db.exec('ALTER TABLE users ADD COLUMN last_longitude REAL');
+}
+if (!userColumns.some((column) => column.name === 'last_location_updated_at')) {
+  db.exec('ALTER TABLE users ADD COLUMN last_location_updated_at TEXT');
+}
+if (!userColumns.some((column) => column.name === 'max_active_assignments')) {
+  db.exec('ALTER TABLE users ADD COLUMN max_active_assignments INTEGER NOT NULL DEFAULT 2');
 }
 
 console.log(`[DB] SQLite database ready at: ${dbPath}`);

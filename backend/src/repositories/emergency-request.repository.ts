@@ -90,12 +90,36 @@ export class EmergencyRequestRepository {
 
   /** Assign a responder to a request (accept it). */
   static assignResponder(requestId: string, responderId: string, responderPhone?: string | null): any {
-    db.prepare(`
+    const result = db.prepare(`
       UPDATE emergency_requests
       SET responder_id = ?, responder_phone = ?, status = 'accepted', accepted_at = datetime('now'),
           updated_at = datetime('now')
       WHERE id = ? AND status = 'pending'
     `).run(responderId, responderPhone || null, requestId);
+
+    if (result.changes === 0) {
+      return null;
+    }
+
+    return this.findById(requestId);
+  }
+
+  /** Remove current responder assignment and move request back to pending. */
+  static unassignResponder(requestId: string): any {
+    const result = db.prepare(`
+      UPDATE emergency_requests
+      SET responder_id = NULL,
+          responder_phone = NULL,
+          status = 'pending',
+          accepted_at = NULL,
+          updated_at = datetime('now')
+      WHERE id = ?
+    `).run(requestId);
+
+    if (result.changes === 0) {
+      return null;
+    }
+
     return this.findById(requestId);
   }
 

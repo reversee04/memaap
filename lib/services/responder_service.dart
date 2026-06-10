@@ -233,15 +233,21 @@ class ResponderService {
     bool isAvailable,
   ) async {
     try {
-      // This would call your backend API
-      // For now, we'll simulate the update
-      debugPrint('Updating responder $responderId availability: $isAvailable');
+      Position? currentPosition;
+      try {
+        currentPosition = await LocationService.getCurrentLocation();
+      } catch (_) {
+        // Availability updates should still work even if GPS lookup fails.
+      }
 
-      // In a real implementation:
-      // await ApiClient.put(
-      //   '/responders/$responderId/availability',
-      //   data: {'isAvailable': isAvailable},
-      // );
+      await ApiClient.put(
+        '/emergency/responders/$responderId/availability',
+        data: {
+          'availability': isAvailable ? 'available' : 'offline',
+          if (currentPosition != null) 'latitude': currentPosition.latitude,
+          if (currentPosition != null) 'longitude': currentPosition.longitude,
+        },
+      );
 
       return true;
     } catch (e) {

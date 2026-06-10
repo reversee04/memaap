@@ -50,16 +50,12 @@ class ResponderDashboardCubit extends Cubit<ResponderDashboardState> {
           final polledRequests =
               await EmergencyRepository.getResponderDashboardRequests(user.id);
 
-          // Merge polled list with current state — keep the newest unique set
+          // Merge polled list with current state — keep newest unique set first
           final merged = {
             for (final r in [...polledRequests, ...state.requests]) r.id: r,
           }.values.toList()
             ..sort((a, b) {
-              // Primary: severity priority (critical=0, urgent=1, non_urgent=2)
-              final sev = a.severity.priorityOrder.compareTo(b.severity.priorityOrder);
-              if (sev != 0) return sev;
-              // Secondary: older requests first within same severity
-              return a.createdAt.compareTo(b.createdAt);
+              return b.createdAt.compareTo(a.createdAt);
             });
 
           final hasNew =
@@ -120,9 +116,7 @@ class ResponderDashboardCubit extends Cubit<ResponderDashboardState> {
                 for (final r in [request, ...currentState.requests]) r.id: r,
               }.values.toList()
                 ..sort((a, b) {
-                  final sev = a.severity.priorityOrder.compareTo(b.severity.priorityOrder);
-                  if (sev != 0) return sev;
-                  return a.createdAt.compareTo(b.createdAt);
+                  return b.createdAt.compareTo(a.createdAt);
                 });
 
               emit(
@@ -224,7 +218,7 @@ class _ResponderDashboardState extends State<ResponderDashboard>
   int _currentIndex = 0;
 
   // Custom states
-  String _selectedFilter = 'all'; // all, pending, active, completed
+  String _selectedFilter = 'all'; // all, pending, active, archive
   bool _isOnlineDuty = true;
   LatLng _responderLocation = const LatLng(
     -15.786111,
@@ -478,10 +472,13 @@ class _ResponderDashboardState extends State<ResponderDashboard>
       } else if (_selectedFilter == 'active') {
         return request.status == EmergencyStatus.accepted ||
             request.status == EmergencyStatus.inProgress;
-      } else if (_selectedFilter == 'completed') {
-        return request.status == EmergencyStatus.completed;
+      } else if (_selectedFilter == 'archive') {
+        return request.status == EmergencyStatus.completed ||
+            request.status == EmergencyStatus.cancelled ||
+            request.status == EmergencyStatus.expired;
       }
-      return true; // all
+      // Default list excludes archived requests to avoid misleading responders.
+      return request.isActive;
     }).toList();
 
     return RefreshIndicator(
@@ -598,7 +595,7 @@ class _ResponderDashboardState extends State<ResponderDashboard>
       {'key': 'all', 'label': 'All Alerts'},
       {'key': 'pending', 'label': 'Urgent SOS'},
       {'key': 'active', 'label': 'My Tasks'},
-      {'key': 'completed', 'label': 'Resolved'},
+      {'key': 'archive', 'label': 'Archive'},
     ];
 
     return SingleChildScrollView(

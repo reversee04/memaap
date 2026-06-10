@@ -1,5 +1,46 @@
 import 'dart:convert';
 
+enum ResponderAvailability {
+  available,
+  busy,
+  offline,
+  onBreak,
+  inTransit,
+}
+
+extension ResponderAvailabilityExtension on ResponderAvailability {
+  String get apiValue {
+    switch (this) {
+      case ResponderAvailability.available:
+        return 'available';
+      case ResponderAvailability.busy:
+        return 'busy';
+      case ResponderAvailability.offline:
+        return 'offline';
+      case ResponderAvailability.onBreak:
+        return 'on_break';
+      case ResponderAvailability.inTransit:
+        return 'in_transit';
+    }
+  }
+
+  static ResponderAvailability fromString(String? value) {
+    switch ((value ?? '').toLowerCase()) {
+      case 'available':
+        return ResponderAvailability.available;
+      case 'busy':
+        return ResponderAvailability.busy;
+      case 'on_break':
+        return ResponderAvailability.onBreak;
+      case 'in_transit':
+        return ResponderAvailability.inTransit;
+      case 'offline':
+      default:
+        return ResponderAvailability.offline;
+    }
+  }
+}
+
 /// Contact entry stored in emergency contacts list.
 class EmergencyContact {
   final String name;
@@ -30,6 +71,9 @@ class UserModel {
   final String phone;
   final String? email;
   final String role;
+  final ResponderAvailability availability;
+  final double? lastLatitude;
+  final double? lastLongitude;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -48,6 +92,9 @@ class UserModel {
     required this.phone,
     this.email,
     required this.role,
+    this.availability = ResponderAvailability.offline,
+    this.lastLatitude,
+    this.lastLongitude,
     required this.createdAt,
     required this.updatedAt,
     this.bloodType,
@@ -64,6 +111,9 @@ class UserModel {
     String? phone,
     String? email,
     String? role,
+    ResponderAvailability? availability,
+    double? lastLatitude,
+    double? lastLongitude,
     DateTime? createdAt,
     DateTime? updatedAt,
     String? bloodType,
@@ -78,6 +128,9 @@ class UserModel {
       phone: phone ?? this.phone,
       email: email ?? this.email,
       role: role ?? this.role,
+      availability: availability ?? this.availability,
+      lastLatitude: lastLatitude ?? this.lastLatitude,
+      lastLongitude: lastLongitude ?? this.lastLongitude,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       bloodType: bloodType ?? this.bloodType,
@@ -130,6 +183,11 @@ class UserModel {
       phone: json['phone'] ?? '',
       email: json['email'],
       role: json['role'] ?? 'patient',
+      availability: ResponderAvailabilityExtension.fromString(
+        json['availability']?.toString(),
+      ),
+      lastLatitude: (json['last_latitude'] as num?)?.toDouble(),
+      lastLongitude: (json['last_longitude'] as num?)?.toDouble(),
       createdAt: DateTime.tryParse(json['created_at'] ?? '') ?? DateTime.now(),
       updatedAt: DateTime.tryParse(json['updated_at'] ?? '') ?? DateTime.now(),
       bloodType: json['blood_type'] ?? json['bloodType'],
@@ -152,6 +210,9 @@ class UserModel {
       'phone': phone,
       if (email != null) 'email': email,
       'role': role,
+      'availability': availability.apiValue,
+      if (lastLatitude != null) 'last_latitude': lastLatitude,
+      if (lastLongitude != null) 'last_longitude': lastLongitude,
       'created_at': createdAt.toIso8601String(),
       'updated_at': updatedAt.toIso8601String(),
       if (bloodType != null) 'blood_type': bloodType,

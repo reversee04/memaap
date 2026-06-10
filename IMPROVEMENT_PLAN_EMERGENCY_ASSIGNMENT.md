@@ -1,5 +1,43 @@
 # Improvement Plan: Emergency Assignment Process
 
+## Implementation Status (2026-06-10)
+
+### Completed in this iteration
+- Added backend responder availability model and persistence:
+  - `users.availability` with states: `available`, `busy`, `offline`, `on_break`, `in_transit`
+  - `users.last_latitude`, `users.last_longitude`, `users.last_location_updated_at`
+  - `users.max_active_assignments` for workload limits
+- Added backend migrations for existing databases to backfill missing columns.
+- Added backend assignment engine (`assignment.service.ts`) with:
+  - proximity scoring (Haversine distance)
+  - workload-aware ranking (`active_assignments` penalty)
+  - fallback behavior when no responder is available
+- Implemented automatic assignment on emergency creation (`POST /api/emergency/create`).
+- Implemented responder availability endpoint:
+  - `PUT /api/emergency/responders/:responderId/availability`
+- Implemented decline + reassignment flow:
+  - `PUT /api/emergency/:id/decline`
+  - unassign current responder, mark declined responder available, reassign closest alternate.
+- Added responder status transition hooks from request status updates:
+  - `accepted -> busy`
+  - `in_progress -> in_transit`
+  - `completed/cancelled -> available`
+- Wired Flutter `ResponderService.updateResponderAvailability` to call backend API with optional current GPS coordinates.
+- Extended Flutter `UserModel` with responder availability and last known location fields.
+
+### Not yet completed from this plan
+- ETA service + real-time ETA updates.
+- Timeout + escalation scheduler (cron/worker).
+- Skill-based assignment.
+- Multi-responder assignment.
+- Assignment analytics/history dashboards.
+
+### Immediate next sprint recommendation
+1. Add `eta.service.ts` and persist `estimated_arrival_minutes` on assignment.
+2. Add periodic timeout worker to escalate pending requests by severity thresholds.
+3. Add assignment event log table (`assignment_events`) for audit + analytics.
+4. Add responder UI controls for full availability states (`on_break`, `in_transit`) instead of binary toggle.
+
 ## Current State Analysis
 
 ### Existing Flow

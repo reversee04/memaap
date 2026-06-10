@@ -5,6 +5,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { AuthService } from '../services/auth.service';
 import { EmergencyRequestRepository } from '../repositories/emergency-request.repository';
+import { AssignmentService } from '../services/assignment.service';
 
 const router = Router();
 
@@ -12,6 +13,17 @@ const router = Router();
 interface AuthenticatedUser {
   userId: string;
   role?: string;
+}
+
+type ResponderAvailability =
+  | 'available'
+  | 'busy'
+  | 'offline'
+  | 'on_break'
+  | 'in_transit';
+
+function isValidAvailability(value: string): value is ResponderAvailability {
+  return ['available', 'busy', 'offline', 'on_break', 'in_transit'].includes(value);
 }
 
 // ── JWT guard ────────────────────────────────────────────────────────────────
@@ -77,12 +89,81 @@ router.post('/create', requireAuth, (req: Request, res: Response): void => {
       severity: severity || 'urgent',
     });
 
-    res.status(201).json({ emergency });
+    const assignment = AssignmentService.assignClosestResponder(emergency.id);
+
+    res.status(201).json({
+      emergency: assignment.emergency,
+      autoAssigned: assignment.assignedResponder != null,
+      assignment: assignment.assignedResponder
+        ? {
+            responderId: assignment.assignedResponder.id,
+            responderName: assignment.assignedResponder.name,
+            responderPhone: assignment.assignedResponder.phone,
+            distanceKm: assignment.distanceKm,
+          }
+        : null,
+    });
   } catch (error) {
     console.error('Create emergency error:', error);
 
     res.status(500).json({
       message: 'Failed to create emergency request',
+    });
+  }
+});
+
+// ── PUT /api/emergency/responders/:responderId/availability ────────────────
+router.put<{ responderId: string }>('/responders/:responderId/availability', requireAuth, (req: Request<{ responderId: string }>, res: Response): void => {
+  try {
+    const { userId, role } = res.locals.user as AuthenticatedUser;
+    const { responderId } = req.params;
+    const { availability, latitude, longitude } = req.body as {
+      availability?: string;
+      latitude?: number;
+      longitude?: number;
+    };
+
+    if (!role || (role !== 'responder' && role !== 'admin')) {
+      res.status(403).json({
+        message: 'Only responders or admins can update responder availability',
+      });
+      return;
+    }
+
+    if (role === 'responder' && userId !== responderId) {
+      res.status(403).json({
+        message: 'Responders can only update their own availability',
+      });
+      return;
+    }
+
+    if (!availability || !isValidAvailability(availability)) {
+      res.status(400).json({
+        message: 'availability must be one of: available, busy, offline, on_break, in_transit',
+      });
+      return;
+    }
+
+    const responder = AssignmentService.setResponderAvailability(
+      responderId,
+      availability,
+      latitude,
+      longitude,
+    );
+
+    if (!responder) {
+      res.status(404).json({
+        message: 'Responder not found',
+      });
+      return;
+    }
+
+    res.json({ responder });
+  } catch (error) {
+    console.error('Update responder availability error:', error);
+
+    res.status(500).json({
+      message: 'Failed to update responder availability',
     });
   }
 });
@@ -192,6 +273,8 @@ router.put<{ id: string }>('/:id/accept', requireAuth, async (req: Request<{ id:
       return;
     }
 
+    AssignmentService.setResponderAvailability(userId, 'busy');
+
     res.json({ emergency });
   } catch (error) {
     console.error('Accept emergency error:', error);
@@ -202,10 +285,70 @@ router.put<{ id: string }>('/:id/accept', requireAuth, async (req: Request<{ id:
   }
 });
 
+// ── PUT /api/emergency/:id/decline ──────────────────────────────────────────
+router.put<{ id: string }>('/:id/decline', requireAuth, (req: Request<{ id: string }>, res: Response): void => {
+  try {
+    const { userId, role } = res.locals.user as AuthenticatedUser;
+
+    if (!role || (role !== 'responder' && role !== 'admin')) {
+      res.status(403).json({
+        message: 'Only responders can decline requests',
+      });
+      return;
+    }
+
+    const request = EmergencyRequestRepository.findById(req.params.id);
+    if (!request) {
+      res.status(404).json({ message: 'Emergency request not found' });
+      return;
+    }
+
+    if (role === 'responder' && request.responder_id !== userId) {
+      res.status(403).json({ message: 'You are not assigned to this request' });
+      return;
+    }
+
+    const declinedResponderId = request.responder_id as string | null;
+    const unassigned = EmergencyRequestRepository.unassignResponder(req.params.id);
+
+    if (!unassigned) {
+      res.status(400).json({ message: 'Failed to unassign responder' });
+      return;
+    }
+
+    if (declinedResponderId) {
+      AssignmentService.setResponderAvailability(declinedResponderId, 'available');
+    }
+
+    const excluded = declinedResponderId ? [declinedResponderId] : [];
+    const reassignment = AssignmentService.reassignAfterDecline(req.params.id, excluded);
+
+    res.json({
+      emergency: reassignment.emergency,
+      reassigned: reassignment.assignedResponder != null,
+      assignment: reassignment.assignedResponder
+        ? {
+            responderId: reassignment.assignedResponder.id,
+            responderName: reassignment.assignedResponder.name,
+            responderPhone: reassignment.assignedResponder.phone,
+            distanceKm: reassignment.distanceKm,
+          }
+        : null,
+    });
+  } catch (error) {
+    console.error('Decline emergency error:', error);
+
+    res.status(500).json({
+      message: 'Failed to decline emergency request',
+    });
+  }
+});
+
 // ── PUT /api/emergency/:id/status ────────────────────────────────────────────
 router.put<{ id: string }>('/:id/status', requireAuth, (req: Request<{ id: string }>, res: Response): void => {
   try {
     const { status } = req.body;
+    const current = EmergencyRequestRepository.findById(req.params.id);
 
     const validStatuses = [
       'pending',
@@ -222,6 +365,13 @@ router.put<{ id: string }>('/:id/status', requireAuth, (req: Request<{ id: strin
       return;
     }
 
+    if (!current) {
+      res.status(404).json({
+        message: 'Emergency request not found',
+      });
+      return;
+    }
+
     const emergency =
       EmergencyRequestRepository.updateStatus(
         req.params.id,
@@ -233,6 +383,17 @@ router.put<{ id: string }>('/:id/status', requireAuth, (req: Request<{ id: strin
         message: 'Emergency request not found',
       });
       return;
+    }
+
+    const responderId = emergency.responder_id || current.responder_id;
+    if (responderId) {
+      if (status === 'in_progress') {
+        AssignmentService.setResponderAvailability(responderId, 'in_transit');
+      } else if (status === 'accepted') {
+        AssignmentService.setResponderAvailability(responderId, 'busy');
+      } else if (status === 'completed' || status === 'cancelled') {
+        AssignmentService.setResponderAvailability(responderId, 'available');
+      }
     }
 
     res.json({ emergency });
