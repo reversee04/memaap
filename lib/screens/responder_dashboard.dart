@@ -1120,8 +1120,9 @@ class _ResponderDashboardState extends State<ResponderDashboard>
   }
 
   Future<void> _showRouteOptionsForRequest(EmergencyRequest request) async {
+    final destination = LatLng(request.latitude, request.longitude);
+
     try {
-      final destination = LatLng(request.latitude, request.longitude);
       final routes = await NavigationService.getRouteOptions(
         origin: _responderLocation,
         destination: destination,
