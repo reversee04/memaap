@@ -1254,6 +1254,27 @@ class _ResponderDashboardState extends State<ResponderDashboard>
         },
       );
     } catch (e) {
+      if (NavigationService.isRoutesConfigurationError(e)) {
+        try {
+          await NavigationService.launchTurnByTurnNavigation(
+            destination: destination,
+            label: request.address,
+          );
+
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Opened external Google Maps navigation because Routes API is not enabled for this key/project.',
+              ),
+            ),
+          );
+          return;
+        } catch (_) {
+          // If external navigation also fails, fall through to the error message below.
+        }
+      }
+
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Could not calculate route options: $e')),

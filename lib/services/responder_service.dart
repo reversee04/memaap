@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import '../repositories/emergency_repository.dart';
 import '../services/location_service.dart';
+import '../services/api_client.dart';
 
 /// Service class for responder operations
 ///

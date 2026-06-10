@@ -51,6 +51,10 @@ class RouteOption {
 }
 
 class NavigationService {
+  static const String routesApiSetupHint =
+      'Enable Routes API for this Google Cloud project and allow this API key to use it. '
+      'A Places-only key is not enough for route calculation.';
+
   static Future<List<RouteOption>> getRouteOptions({
     required LatLng origin,
     required LatLng destination,
@@ -118,6 +122,15 @@ class NavigationService {
         final apiMessage = error?['message']?.toString();
         if (apiMessage != null && apiMessage.isNotEmpty) {
           message = 'Routes API error: $apiMessage';
+
+          final normalized = apiMessage.toLowerCase();
+          if (normalized.contains('not enabled') ||
+              normalized.contains('api has not been used') ||
+              normalized.contains('service disabled') ||
+              normalized.contains('api_key_service_blocked') ||
+              normalized.contains('permission denied')) {
+            message = 'Routes API is not enabled for this key/project. $routesApiSetupHint';
+          }
         }
       } catch (_) {
         // Keep generic message when response body is not JSON.
@@ -274,5 +287,12 @@ class NavigationService {
         '[NavigationService] Selected ${option.summary} (${option.durationText}, ${option.distanceText})',
       );
     }
+  }
+
+  static bool isRoutesConfigurationError(Object error) {
+    final text = error.toString().toLowerCase();
+    return text.contains('routes api is not enabled') ||
+        text.contains('places-only key') ||
+        text.contains('not enabled for this key/project');
   }
 }

@@ -209,7 +209,12 @@ class EmergencyRepository {
         return requests;
       }
     } catch (e) {
-      // Fall through to local cache below.
+      if (_isOnline) {
+        debugPrint(
+          '[EmergencyRepository] Online pending fetch failed; refusing stale local fallback: $e',
+        );
+        return [];
+      }
     }
 
     return _getRequestsFromDatabase(status: EmergencyStatus.pending);
@@ -235,7 +240,12 @@ class EmergencyRepository {
         return requests;
       }
     } catch (e) {
-      // Fall through to local cache below.
+      if (_isOnline) {
+        debugPrint(
+          '[EmergencyRepository] Online responder fetch failed; refusing stale local fallback: $e',
+        );
+        return [];
+      }
     }
 
     return _getRequestsFromDatabase(responderId: responderId);
