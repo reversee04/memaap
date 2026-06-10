@@ -1,5 +1,39 @@
 # Improvement Plan: Map and Location Directions
 
+## Implementation Status (2026-06-10)
+
+### Completed in this iteration
+- Added a new Flutter navigation module:
+	- `lib/services/navigation_service.dart`
+	- Fetches Google Directions routes with alternatives and traffic-aware ETA (`departure_time=now`, `traffic_model=best_guess`)
+	- Parses and ranks route options by effective travel time
+	- Launches external turn-by-turn navigation using Google navigation intents / Maps deep links
+- Added route rendering helpers to map controller:
+	- `drawRouteFromPoints(...)`
+	- `boundsForPoints(...)`
+- Upgraded responder map workflow:
+	- `Get Route` now opens route options (fastest + alternatives) instead of drawing a single hardcoded route
+	- Selecting a route draws it and fits map camera bounds
+	- Added quick `Navigate` action from selected route snack action
+- Enabled traffic overlays on key maps:
+	- Responder map (`responder_dashboard.dart`)
+	- Patient tracking map (`tracking_screen.dart`)
+- Added hospital navigation action:
+	- `hospitals_screen.dart` now supports direct `Navigate` to selected hospital in addition to call button
+
+### Not yet completed from this plan
+- In-app voice guidance and step-by-step instruction UI.
+- Off-route detection and automatic rerouting loop.
+- Backend directions proxy service (`backend/src/services/directions.service.ts`).
+- Explicit route preference controls (avoid tolls/highways) in UI.
+- Offline map downloads and offline navigation strategy.
+
+### Immediate next sprint recommendation
+1. Add route preference toggles (avoid tolls/highways) on route options sheet.
+2. Add turn instruction panel fed by Directions step data.
+3. Add periodic off-route checks and auto-refresh route options.
+4. Add backend caching proxy for directions calls to reduce API cost and secure keys.
+
 ## Current State Analysis
 
 ### Existing Flow
@@ -107,24 +141,6 @@ Show multiple route options:
 - Customizable to preferences
 - Better planning
 
-### 5. Offline Maps
-**Priority**: Medium
-**Impact**: Medium
-
-Download maps for offline use:
-- Download city/region maps
-- Cache frequently used areas
-- Offline navigation capability
-- Offline search
-- Auto-download based on location
-- Storage management
-
-**Benefits**:
-- Works without internet
-- Better in rural areas
-- Reduced data usage
-- Faster map loading
-- More reliable
 
 ### 6. Hospital and Facility Integration
 **Priority**: High
@@ -164,24 +180,6 @@ Integrate landmarks and points of interest:
 - Improved situational awareness
 - Better emergency response
 
-### 8. Location Sharing with Third Parties
-**Priority**: Medium
-**Impact**: High
-
-Allow sharing location with family/friends:
-- Share live location link
-- Share with emergency contacts
-- Share via SMS/email
-- Set sharing duration
-- Stop sharing anytime
-- Show who has access
-
-**Benefits**:
-- Family can track progress
-- Better communication
-- Peace of mind
-- Coordination at hospital
-- Safety transparency
 
 ### 9. Map Customization and Preferences
 **Priority**: Low
@@ -202,26 +200,6 @@ Allow map customization:
 - User control
 - Improved usability
 
-### 10. Accessibility Features
-**Priority**: Medium
-**Impact**: Medium
-
-Add accessibility features:
-- Voice navigation
-- High contrast mode
-- Large text mode
-- Screen reader support
-- Colorblind-friendly colors
-- Haptic feedback
-
-**Benefits**:
-- Inclusive design
-- Better for visually impaired
-- Compliance with accessibility standards
-- Wider user base
-- Better user experience
-
----
 
 ## Implementation Plan
 
@@ -317,96 +295,8 @@ Add accessibility features:
 
 **Estimated time**: 8 hours
 
-#### 2.2 Offline Maps
-**Files to modify**:
-- `lib/services/offline_map_service.dart` (NEW) - Offline map management
-- `lib/screens/map_download_screen.dart` (NEW) - Download UI
-- `lib/screens/settings_screen.dart` - Map storage management
-
-**Steps**:
-1. Integrate offline map library
-2. Create offline map service
-3. Implement map download
-4. Implement offline search
-5. Create download UI
-6. Add storage management
-7. Test offline navigation
-
-**Estimated time**: 14 hours
-
-#### 2.3 Landmark and POI Integration
-**Files to modify**:
-- `backend/src/repositories/poi.repository.ts` (NEW) - POI data
-- `backend/src/services/poi.service.ts` (NEW) - POI search
-- `lib/screens/map_screen.dart` - Show POIs
-- `lib/screens/poi_selection_screen.dart` (NEW) - POI UI
-
-**Steps**:
-1. Create POI repository
-2. Populate POI database
-3. Add POI search service
-4. Show POIs on map
-5. Create POI selection UI
-6. Add POI categories
-7. Test POI integration
-
-**Estimated time**: 12 hours
-
-#### 2.4 Location Sharing with Third Parties
-**Files to modify**:
-- `lib/services/location_sharing_service.dart` (NEW) - Sharing logic
-- `lib/screens/location_sharing_screen.dart` (NEW) - Sharing UI
-- `lib/screens/tracking_screen.dart` - Add share button
-- `backend/src/services/location-sharing.service.ts` (NEW) - Sharing links
-
-**Steps**:
-1. Create location sharing service
-2. Generate shareable links
-3. Implement live location sharing
-4. Create sharing UI
-5. Add SMS/email sharing
-6. Add sharing duration control
-7. Test location sharing
-
-**Estimated time**: 10 hours
 
 ### Phase 3: Low Priority Improvements (Week 5)
-
-#### 3.1 Map Customization and Preferences
-**Files to modify**:
-- `lib/models/map_preferences.dart` (NEW) - Preferences model
-- `lib/screens/map_settings_screen.dart` (NEW) - Settings UI
-- `lib/screens/map_screen.dart` - Apply preferences
-
-**Steps**:
-1. Create map preferences model
-2. Add map style options
-3. Add theme options
-4. Create settings UI
-5. Implement preference persistence
-6. Apply preferences to map
-7. Test customization
-
-**Estimated time**: 8 hours
-
-#### 3.2 Accessibility Features
-**Files to modify**:
-- `lib/screens/map_screen.dart` - Add accessibility
-- `lib/services/navigation_service.dart` - Voice navigation
-- `lib/screens/settings_screen.dart` - Accessibility options
-
-**Steps**:
-1. Add screen reader support
-2. Implement high contrast mode
-3. Add large text mode
-4. Implement voice navigation
-5. Add haptic feedback
-6. Use colorblind-friendly colors
-7. Test accessibility features
-
-**Estimated time**: 10 hours
-
----
 
 ## Testing Plan
 

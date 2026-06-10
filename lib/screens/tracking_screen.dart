@@ -255,6 +255,7 @@ class _TrackingScreenState extends State<TrackingScreen>
               polylines: _mapController?.polylines ?? {},
               myLocationEnabled: true,
               myLocationButtonEnabled: false,
+              trafficEnabled: true,
               zoomControlsEnabled: false,
               tiltGesturesEnabled: false,
               rotateGesturesEnabled: false,

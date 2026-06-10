@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import '../models/hospital_model.dart';
 import '../services/hospital_service.dart';
+import '../services/navigation_service.dart';
 
 class HospitalsScreen extends StatefulWidget {
   const HospitalsScreen({super.key});
@@ -83,6 +85,20 @@ class _HospitalsScreenState extends State<HospitalsScreen> {
           const SnackBar(content: Text('Could not launch dialer')),
         );
       }
+    }
+  }
+
+  Future<void> _navigateToHospital(HospitalModel hospital) async {
+    try {
+      await NavigationService.launchTurnByTurnNavigation(
+        destination: LatLng(hospital.lat, hospital.lng),
+        label: hospital.name,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Unable to open navigation: $e')),
+      );
     }
   }
 
@@ -207,23 +223,42 @@ class _HospitalsScreenState extends State<HospitalsScreen> {
                             ],
                           ),
                           const SizedBox(height: 16),
-                          SizedBox(
-                            width: double.infinity,
-                            child: ElevatedButton.icon(
-                              onPressed: hospital.phone != null
-                                  ? () => _callHospital(hospital.phone)
-                                  : null,
-                              icon: const Icon(LucideIcons.phone),
-                              label: const Text('Call Hospital'),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Theme.of(context).colorScheme.primary,
-                                foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(vertical: 12),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(8),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: ElevatedButton.icon(
+                                  onPressed: () => _navigateToHospital(hospital),
+                                  icon: const Icon(LucideIcons.navigation),
+                                  label: const Text('Navigate'),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Theme.of(context).colorScheme.primary,
+                                    foregroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(vertical: 12),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                  ),
                                 ),
                               ),
-                            ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: ElevatedButton.icon(
+                                  onPressed: hospital.phone != null
+                                      ? () => _callHospital(hospital.phone)
+                                      : null,
+                                  icon: const Icon(LucideIcons.phone),
+                                  label: const Text('Call Hospital'),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.green,
+                                    foregroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(vertical: 12),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ],
                       ),

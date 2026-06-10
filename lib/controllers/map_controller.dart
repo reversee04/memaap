@@ -316,6 +316,63 @@ class MapController {
     }
   }
 
+  /// Draws a route polyline from precomputed points.
+  PolylineId drawRouteFromPoints(
+    List<LatLng> points, {
+    String? routeId,
+    Color color = const Color(0xFF2196F3),
+    double width = 5.0,
+    bool clearExistingRoutes = true,
+  }) {
+    if (points.isEmpty) {
+      throw MapException('Cannot draw route from empty points list');
+    }
+
+    if (clearExistingRoutes) {
+      _polylines.clear();
+    }
+
+    final polylineId = PolylineId(
+      routeId ?? 'route_${DateTime.now().millisecondsSinceEpoch}',
+    );
+
+    final polyline = Polyline(
+      polylineId: polylineId,
+      color: color,
+      width: width.toInt(),
+      points: points,
+      startCap: Cap.roundCap,
+      endCap: Cap.roundCap,
+    );
+
+    _polylines.add(polyline);
+    return polylineId;
+  }
+
+  /// Computes map bounds for a list of points with small visual padding.
+  LatLngBounds boundsForPoints(List<LatLng> points, {double pad = 0.002}) {
+    if (points.isEmpty) {
+      throw MapException('Cannot compute bounds for empty points list');
+    }
+
+    double minLat = points.first.latitude;
+    double maxLat = points.first.latitude;
+    double minLng = points.first.longitude;
+    double maxLng = points.first.longitude;
+
+    for (final point in points.skip(1)) {
+      if (point.latitude < minLat) minLat = point.latitude;
+      if (point.latitude > maxLat) maxLat = point.latitude;
+      if (point.longitude < minLng) minLng = point.longitude;
+      if (point.longitude > maxLng) maxLng = point.longitude;
+    }
+
+    return LatLngBounds(
+      southwest: LatLng(minLat - pad, minLng - pad),
+      northeast: LatLng(maxLat + pad, maxLng + pad),
+    );
+  }
+
   /// Animates the camera to a specific target
   /// 
   /// [target] - Target LatLng position

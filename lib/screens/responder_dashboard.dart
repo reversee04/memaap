@@ -12,6 +12,7 @@ import '../models/user_model.dart';
 import '../repositories/emergency_repository.dart';
 import '../services/location_service.dart';
 import '../services/responder_service.dart';
+import '../services/navigation_service.dart';
 import '../controllers/map_controller.dart';
 import '../services/auth_service.dart';
 
@@ -894,6 +895,7 @@ class _ResponderDashboardState extends State<ResponderDashboard>
           ),
           myLocationEnabled: true,
           myLocationButtonEnabled: false,
+          trafficEnabled: true,
           zoomControlsEnabled: false,
           markers: _mapController?.markers ?? {},
           polylines: _mapController?.polylines ?? {},
@@ -1067,44 +1069,7 @@ class _ResponderDashboardState extends State<ResponderDashboard>
               Expanded(
                 child: ElevatedButton.icon(
                   onPressed: () async {
-                    // Draw active path on map
-                    if (_mapController != null) {
-                      _mapController!.clearRoute();
-                      await _mapController!.drawRoute(
-                        _responderLocation,
-                        LatLng(request.latitude, request.longitude),
-                        color: const Color(0xFF0033CC),
-                        width: 5,
-                      );
-
-                      // Animate between coordinates
-                      double minLat =
-                          _responderLocation.latitude < request.latitude
-                          ? _responderLocation.latitude
-                          : request.latitude;
-                      double maxLat =
-                          _responderLocation.latitude > request.latitude
-                          ? _responderLocation.latitude
-                          : request.latitude;
-                      double minLng =
-                          _responderLocation.longitude < request.longitude
-                          ? _responderLocation.longitude
-                          : request.longitude;
-                      double maxLng =
-                          _responderLocation.longitude > request.longitude
-                          ? _responderLocation.longitude
-                          : request.longitude;
-
-                      _mapController!.controller?.animateCamera(
-                        CameraUpdate.newLatLngBounds(
-                          LatLngBounds(
-                            southwest: LatLng(minLat - 0.002, minLng - 0.002),
-                            northeast: LatLng(maxLat + 0.002, maxLng + 0.002),
-                          ),
-                          50,
-                        ),
-                      );
-                    }
+                    await _showRouteOptionsForRequest(request);
                   },
                   icon: const Icon(LucideIcons.navigation, size: 14),
                   label: const Text('Get Route'),
@@ -1119,6 +1084,148 @@ class _ResponderDashboardState extends State<ResponderDashboard>
         ],
       ),
     );
+  }
+
+  Future<void> _showRouteOptionsForRequest(EmergencyRequest request) async {
+    try {
+      final destination = LatLng(request.latitude, request.longitude);
+      final routes = await NavigationService.getRouteOptions(
+        origin: _responderLocation,
+        destination: destination,
+        includeAlternatives: true,
+      );
+
+      if (routes.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('No route options found right now.')),
+          );
+        }
+        return;
+      }
+
+      if (!mounted) return;
+
+      await showModalBottomSheet<void>(
+        context: context,
+        showDragHandle: true,
+        builder: (sheetContext) {
+          return SafeArea(
+            child: ListView.separated(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
+              itemCount: routes.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 8),
+              itemBuilder: (context, index) {
+                final route = routes[index];
+                final isFastest = index == 0;
+
+                return Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: isFastest
+                          ? const Color(0xFF0033CC).withOpacity(0.35)
+                          : Colors.grey.shade300,
+                    ),
+                  ),
+                  child: ListTile(
+                    leading: CircleAvatar(
+                      backgroundColor: isFastest
+                          ? const Color(0xFF0033CC)
+                          : Colors.grey.shade500,
+                      child: Text(
+                        '${index + 1}',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                    title: Text(
+                      route.summary,
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    subtitle: Text(
+                      '${NavigationService.friendlyEta(route)} • '
+                      '${NavigationService.compactDistanceKm(route)} • '
+                      '${route.trafficDeltaText}',
+                    ),
+                    trailing: isFastest
+                        ? Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF0033CC).withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Text(
+                              'FASTEST',
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                                color: Color(0xFF0033CC),
+                              ),
+                            ),
+                          )
+                        : null,
+                    onTap: () async {
+                      NavigationService.logRouteSelection(route);
+                      Navigator.of(sheetContext).pop();
+
+                      if (_mapController == null) return;
+
+                      _mapController!.drawRouteFromPoints(
+                        route.points,
+                        color: const Color(0xFF0033CC),
+                        width: 5,
+                        clearExistingRoutes: true,
+                      );
+
+                      final bounds = _mapController!.boundsForPoints(route.points);
+                      await _mapController!.controller?.animateCamera(
+                        CameraUpdate.newLatLngBounds(bounds, 50),
+                      );
+
+                      if (!mounted) return;
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            'Route selected: ${NavigationService.friendlyEta(route)}',
+                          ),
+                          action: SnackBarAction(
+                            label: 'Navigate',
+                            onPressed: () async {
+                              try {
+                                await NavigationService.launchTurnByTurnNavigation(
+                                  destination: destination,
+                                  label: request.address,
+                                );
+                              } catch (e) {
+                                if (!mounted) return;
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(content: Text('Navigation error: $e')),
+                                );
+                              }
+                            },
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                );
+              },
+            ),
+          );
+        },
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not calculate route options: $e')),
+      );
+    }
   }
 
   /// Refreshes all markers on Google Map
