@@ -14,6 +14,7 @@ import '../services/location_service.dart';
 import '../services/responder_service.dart';
 import '../controllers/map_controller.dart';
 import '../services/auth_service.dart';
+import '../config/database_helper.dart';
 
 /// BLoC for managing responder dashboard state
 class ResponderDashboardCubit extends Cubit<ResponderDashboardState> {
@@ -244,6 +245,9 @@ class _ResponderDashboardState extends State<ResponderDashboard>
     _cubit = ResponderDashboardCubit();
     _cubit.initialize();
 
+    // Clear any old test data from local database
+    _clearOldTestData();
+
     // Initialize status pulse animation
     _pulseController = AnimationController(
       vsync: this,
@@ -255,6 +259,23 @@ class _ResponderDashboardState extends State<ResponderDashboard>
     );
 
     _initLocationListening();
+  }
+
+  /// Clears old test data from local database
+  Future<void> _clearOldTestData() async {
+    try {
+      final db = await DatabaseHelper().database;
+      // Delete requests older than 24 hours
+      final oneDayAgo = DateTime.now().subtract(const Duration(hours: 24)).toIso8601String();
+      await db.delete(
+        DatabaseHelper.tableEmergencyRequests,
+        where: 'created_at < ?',
+        whereArgs: [oneDayAgo],
+      );
+      debugPrint('Cleared old test data from local database');
+    } catch (e) {
+      debugPrint('Failed to clear old test data: $e');
+    }
   }
 
   @override
