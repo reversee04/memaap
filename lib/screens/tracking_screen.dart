@@ -556,10 +556,28 @@ class _TrackingScreenState extends State<TrackingScreen>
     }
   }
 
-  /// Calls the responder
+  /// Normalizes phone number for tel: URI
+  String? _normalizePhoneForDialer(String? rawPhone) {
+    if (rawPhone == null) return null;
+
+    final trimmed = rawPhone.trim();
+    if (trimmed.isEmpty) return null;
+
+    final cleaned = trimmed.replaceAll(RegExp(r'[^0-9+]'), '');
+    if (cleaned.isEmpty) return null;
+
+    final normalized = cleaned.startsWith('+')
+        ? '+${cleaned.substring(1).replaceAll('+', '')}'n        : cleaned.replaceAll('+', '');
+
+    return normalized.isEmpty ? null : normalized;
+  }
+
+  /// Calls the responder by opening phone dialer with number prefilled
   Future<void> _callResponder() async {
     final phoneNumber = _currentRequest?.responderPhone;
-    if (phoneNumber == null || phoneNumber.trim().isEmpty) {
+    final normalizedPhone = _normalizePhoneForDialer(phoneNumber);
+    
+    if (normalizedPhone == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Responder phone number is not available yet.'),
@@ -568,10 +586,20 @@ class _TrackingScreenState extends State<TrackingScreen>
       return;
     }
 
-    await PhoneCallService.makePhoneCall(
-      phoneNumber: phoneNumber,
-      context: context,
+    final Uri launchUri = Uri(
+      scheme: 'tel',
+      path: normalizedPhone,
     );
+
+    if (await canLaunchUrl(launchUri)) {
+      await launchUrl(launchUri, mode: LaunchMode.externalApplication);
+    } else {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not launch dialer')),
+        );
+      }
+    }
   }
 
   /// Shares current location
